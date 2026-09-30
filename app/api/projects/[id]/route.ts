@@ -1,0 +1,2 @@
+import {db,handled,HttpError,json,owner} from '@/lib/server';
+export async function GET(req:Request,{params}:{params:Promise<{id:string}>}){return handled(async()=>{const user=await owner(),{id}=await params;const row=await db().prepare('SELECT document,revision FROM projects WHERE id=? AND owner=?').bind(id,user).first<{document:string;revision:number}>();if(!row)throw new HttpError('Project not found.',404);return json({project:JSON.parse(row.document),revision:row.revision});});}
