@@ -3,8 +3,8 @@ export const frameSchema=z.object({time:z.number().min(0).max(600),value:z.numbe
 export const layerSchema=z.object({id:z.string().min(1).max(100),name:z.string().max(200),type:z.enum(['text','rect','ellipse','image']),x:z.number().finite(),y:z.number().finite(),width:z.number().positive().max(20000),height:z.number().positive().max(20000),rotation:z.number().finite(),opacity:z.number().min(0).max(1),visible:z.boolean(),locked:z.boolean(),color:z.string().max(100),text:z.string().max(20000),src:z.string().max(2000),fontSize:z.number().min(1).max(2000),fontFamily:z.string().max(100),fontWeight:z.number(),align:z.enum(['left','center','right']),radius:z.number().min(0).max(1000),shadow:z.boolean(),keys:z.record(z.enum(['x','y','width','height','rotation','opacity']),z.array(frameSchema).max(1000))});
 export const sceneSchema=z.object({id:z.string(),name:z.string().max(200),width:z.number().min(100).max(7680),height:z.number().min(100).max(4320),duration:z.number().min(.1).max(600),layers:z.array(layerSchema).max(250)});
 export const actionSchema=z.object({id:z.string(),type:z.enum(['preview','take','clear','set','increment','delay','fetch','update']),target:z.string().max(200),value:z.string().max(4000),condition:z.string().max(200)});
-export const controlSchema=z.object({id:z.string(),label:z.string().max(100),kind:z.enum(['button','toggle','number','text','select','timer']),color:z.string().max(100),span:z.number().int().min(1).max(8),variable:z.string().max(100),options:z.string().max(1000),shortcut:z.string().max(1),actions:z.array(actionSchema).max(100)});
-export const panelSchema=z.object({id:z.string(),name:z.string().max(200),type:z.enum(['custom','football']),columns:z.number().int().min(1).max(8),controls:z.array(controlSchema).max(500)});
+export const controlSchema=z.object({id:z.string(),label:z.string().max(100),kind:z.enum(['button','toggle','number','text','select','timer','pitch','bench','scoreboard','label','image']),color:z.string().max(100),span:z.number().int().min(1).max(8),variable:z.string().max(100),options:z.string().max(1000),shortcut:z.string().max(1),actions:z.array(actionSchema).max(100),dataFields:z.record(z.enum(['homeTeam','awayTeam','homeScore','awayScore','matchClock','homeFormation','awayFormation']),z.string().max(100)).optional(),homeColor:z.string().max(100).optional(),awayColor:z.string().max(100).optional(),orientation:z.enum(['horizontal','vertical']).optional(),imageSrc:z.string().max(2000).optional(),imageFit:z.enum(['contain','cover']).optional(),fontSize:z.number().min(10).max(200).optional(),placement:z.object({x:z.number().min(0).max(3840),y:z.number().min(0).max(10000),width:z.number().min(80).max(3840),height:z.number().min(64).max(10000)}).optional()});
+export const panelSchema=z.object({id:z.string(),name:z.string().max(200),type:z.enum(['custom','football']),columns:z.number().int().min(1).max(8),controls:z.array(controlSchema).max(500),freeLayout:z.boolean().optional(),canvasWidth:z.number().min(320).max(3840).optional(),canvasHeight:z.number().min(160).max(10000).optional()});
 export const sourceSchema=z.object({id:z.string(),name:z.string().max(200),url:z.string().max(2000),interval:z.number().min(0).max(3600)});
 export const bindingSchema=z.object({id:z.string(),sourceId:z.string(),path:z.string().max(300),sceneId:z.string(),layerId:z.string(),property:z.enum(['text','src','color'])});
 export const playerSchema=z.object({id:z.string(),team:z.enum(['home','away']),number:z.number().int().min(0).max(999),name:z.string().max(100),position:z.string().max(20),photo:z.string().max(2000),bench:z.boolean(),slot:z.number(),card:z.string().max(20)});
@@ -29,6 +29,23 @@ export function moveLayer(l:Layer,x:number,y:number):Layer{
 }
 export function timelineKeyframes(l:Layer):Keyframe[]{
  return Object.values(l.keys).flatMap(track=>Array.isArray(track)?track.filter(frame=>frame&&Number.isFinite(frame.time)&&Number.isFinite(frame.value)):[]);
+}
+export function variableActionValue(variables:Project['variables'],target:string,value:string,type:'set'|'increment'):string|number|boolean{
+ if(!target||!Object.hasOwn(variables,target))throw Error('Choose an existing variable from Data.');
+ const current=variables[target];
+ if(type==='increment'&&typeof current!=='number')throw Error('Increase variable requires a numeric variable from Data.');
+ if(typeof current==='number'){
+  const n=Number(value);
+  if(!value.trim()||!Number.isFinite(n))throw Error('Enter a valid number for this variable.');
+  const result=type==='increment'?current+n:n;
+  if(!Number.isFinite(result))throw Error('The result is outside the supported number range.');
+  return result;
+ }
+ if(typeof current==='boolean'){
+  if(value!=='true'&&value!=='false')throw Error('Use true or false for this variable.');
+  return value==='true';
+ }
+ return value;
 }
 export function pathValue(data:unknown,path:string):unknown{return path.replace(/\[(\d+)\]/g,'.$1').split('.').filter(Boolean).reduce((v:unknown,key)=>v&&typeof v==='object'&&Object.hasOwn(v,key)?(v as Record<string,unknown>)[key]:undefined,data);}
 export function textValue(value:string,variables:Project['variables']){return value.replace(/\{\{\s*([^{}]+?)\s*\}\}/g,(_,key)=>String(variables[key]??''));}export function safeImage(src:string){return src.startsWith('/api/assets/')||/^https:\/\//i.test(src);}
