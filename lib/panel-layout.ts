@@ -36,7 +36,7 @@ export function appendPanelControl(panel:Panel,control:Control):Panel{
  const size=panelSize(panel),width=Math.min(control.placement?.width??220,size.width),height=control.placement?.height??100;
  const occupied=panel.controls.map((c,i)=>controlBounds(panel,c,i));
  let placement:ControlBounds={x:0,y:size.height,width,height};
- outer:for(let y=0;y<=size.height;y+=112)for(let x=0;x+width<=size.width;x+=width+12){
+ outer:for(let y=0;y<=size.height;y+=16)for(let x=0;x+width<=size.width;x+=width+12){
   const candidate={x,y,width,height};
   if(!occupied.some(b=>x<b.x+b.width+8&&x+width+8>b.x&&y<b.y+b.height+8&&y+height+8>b.y)){
    placement=candidate;break outer;

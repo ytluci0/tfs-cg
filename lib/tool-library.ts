@@ -1,0 +1,34 @@
+import type {Control} from './studio-model';
+export type ToolRecipe={id:string;category:'Sports'|'Esports'|'Common';label:string;description:string;control:Partial<Control>&{kind:Control['kind']};initial?:string|number|boolean};
+const counter=(id:string,label:string,variable:string,category:ToolRecipe['category']='Sports',initial=0):ToolRecipe=>({id,category,label,description:'Plus, minus, direct entry and reset. Configure steps and limits.',control:{kind:'counter',label,variable,minimum:0,maximum:999,step:1,resetValue:initial},initial});
+export const toolRecipes:ToolRecipe[]=[
+ counter('home-score','Home score','homeScore'),counter('away-score','Away score','awayScore'),
+ {...counter('home-points','Home basketball points','homeScore'),control:{kind:'counter',label:'Home points',variable:'homeScore',minimum:0,step:1,quickSteps:[1,2,3]}},
+ {...counter('away-points','Away basketball points','awayScore'),control:{kind:'counter',label:'Away points',variable:'awayScore',minimum:0,step:1,quickSteps:[1,2,3]}},
+ counter('home-fouls','Home fouls','homeFouls'),counter('away-fouls','Away fouls','awayFouls'),counter('home-timeouts','Home timeouts','homeTimeouts','Sports',3),counter('away-timeouts','Away timeouts','awayTimeouts','Sports',3),
+ {id:'home-formation',category:'Sports',label:'Home formation',description:'Built-in and custom formations from Formation studio.',control:{kind:'formation',label:'Home formation',variable:'homeFormation'},initial:'4-3-3'},
+ {id:'away-formation',category:'Sports',label:'Away formation',description:'Built-in and custom formations from Formation studio.',control:{kind:'formation',label:'Away formation',variable:'awayFormation'},initial:'4-4-2'},
+ {id:'period',category:'Sports',label:'Period / quarter',description:'Editable choice buttons for halves, quarters, innings or sets.',control:{kind:'segmented',label:'Period',variable:'period',options:'Q1,Q2,Q3,Q4,OT'},initial:'Q1'},
+ {id:'clock',category:'Sports',label:'Match clock',description:'Start, pause, reset and adjust elapsed match time.',control:{kind:'timer',label:'Match clock',variable:'matchClock',timerDirection:'up',timerSeconds:0},initial:'00:00'},
+ {id:'shot-clock',category:'Sports',label:'Shot clock',description:'24-second countdown with reset and time adjustments.',control:{kind:'timer',label:'Shot clock',variable:'shotClock',timerDirection:'down',timerSeconds:24},initial:'00:24'},
+ {id:'possession',category:'Sports',label:'Possession',description:'Choose which team has possession.',control:{kind:'segmented',label:'Possession',variable:'possession',options:'Home,Away'},initial:'Home'},
+ counter('round','Round','round','Esports',1),counter('home-series','Home series wins','homeSeries','Esports'),counter('away-series','Away series wins','awaySeries','Esports'),counter('kills','Kills','kills','Esports'),counter('deaths','Deaths','deaths','Esports'),counter('assists','Assists','assists','Esports'),
+ {id:'map',category:'Esports',label:'Map selector',description:'Edit the map pool for any game.',control:{kind:'select',label:'Current map',variable:'currentMap',options:'Map 1,Map 2,Map 3,Map 4,Map 5'},initial:'Map 1'},
+ {id:'best-of',category:'Esports',label:'Series format',description:'Best-of-one, three, five or seven.',control:{kind:'segmented',label:'Series format',variable:'seriesFormat',options:'BO1,BO3,BO5,BO7'},initial:'BO3'},
+ {id:'side',category:'Esports',label:'Team side',description:'Customize sides for your game.',control:{kind:'segmented',label:'Home side',variable:'homeSide',options:'Attack,Defense'},initial:'Attack'},
+ {id:'draft',category:'Esports',label:'Pick / ban state',description:'Use with a map, player or character dropdown.',control:{kind:'segmented',label:'Draft action',variable:'draftAction',options:'Pick,Ban,Lock'},initial:'Pick'},
+ {id:'selection',category:'Esports',label:'Character / map pool',description:'Enter your own characters, maps or agents as options.',control:{kind:'select',label:'Selection',variable:'draftSelection',options:'Option 1,Option 2,Option 3'},initial:'Option 1'},
+ {id:'timeout',category:'Esports',label:'Timeout countdown',description:'60-second countdown with start, pause and reset.',control:{kind:'timer',label:'Timeout',variable:'timeoutClock',timerDirection:'down',timerSeconds:60},initial:'01:00'},
+ {id:'home-name',category:'Common',label:'Home team name',description:'Edit a shared team name.',control:{kind:'text',label:'Home team',variable:'homeTeam'},initial:'HOME'},
+ {id:'away-name',category:'Common',label:'Away team name',description:'Edit a shared team name.',control:{kind:'text',label:'Away team',variable:'awayTeam'},initial:'AWAY'},
+ {id:'home-color',category:'Common',label:'Home team color',description:'Color picker connected to a shared variable.',control:{kind:'color',label:'Home color',variable:'homeColor'},initial:'#3478ee'},
+ {id:'away-color',category:'Common',label:'Away team color',description:'Color picker connected to a shared variable.',control:{kind:'color',label:'Away color',variable:'awayColor'},initial:'#df3b48'},
+ {id:'phase',category:'Common',label:'Match phase',description:'Pregame, live, breaks, overtime and final.',control:{kind:'select',label:'Match phase',variable:'matchPhase',options:'Pregame,Live,Break,Overtime,Final'},initial:'Pregame'},
+ {id:'progress',category:'Common',label:'Progress / percentage',description:'Adjust a number with a bounded slider.',control:{kind:'slider',label:'Progress',variable:'progress',minimum:0,maximum:100,step:1},initial:0},
+ {id:'visibility',category:'Common',label:'Visibility toggle',description:'Boolean variable for conditional button actions.',control:{kind:'toggle',label:'Enabled',variable:'enabled'},initial:true}
+];
+export const panelPacks=[
+ {id:'football',label:'Football controls',description:'Scores, formations, clock, phase and team colors.',recipes:['home-score','away-score','home-formation','away-formation','clock','phase','home-color','away-color']},
+ {id:'basketball',label:'Basketball controls',description:'1/2/3-point scoring, fouls, timeouts, periods and shot clock.',recipes:['home-points','away-points','home-fouls','away-fouls','home-timeouts','away-timeouts','period','shot-clock']},
+ {id:'esports',label:'Esports controls',description:'Round and series scores, map selection, sides, draft state and timeout.',recipes:['home-score','away-score','round','home-series','away-series','map','best-of','side','draft','selection','timeout','phase']}
+];
