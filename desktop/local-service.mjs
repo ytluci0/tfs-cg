@@ -13,6 +13,9 @@ import {exposedVariables} from './project-policy.mjs';
 import {ServiceError} from './service-error.mjs';
 export {ServiceError} from './service-error.mjs';
 import {createSecurity,migrateSecurity} from './security.mjs';
+import {createProjectPackage,unpackProjectPackage,projectDependencies} from './project-package.mjs';
+import {createRecoveryStore} from './recovery-store.mjs';
+import {migrateAccess} from './access-migration.mjs';
 import {planActions} from '../lib/action-logic.ts';
 import {createCommandEngine,migrateCommands} from './command-engine.mjs';
 import {checkProjectChanges,checkVariables} from './project-policy.mjs';
@@ -38,9 +41,9 @@ function assetIds(project){
 export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>{},confirmProgram=async()=>{},event=()=>{},workstation=()=>'Local workstation',now=Date.now,monotonic,assertControl=()=>{}}){
   mkdirSync(directory,{recursive:true});
   const db=new DatabaseSync(join(directory,'broadcastcg.sqlite'));
-  db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
+  try{db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version>6){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
+  if(version>7){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
   if(version===0)db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,document TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE assets(id TEXT PRIMARY KEY,name TEXT NOT NULL,mime TEXT NOT NULL,bytes BLOB NOT NULL);
@@ -62,6 +65,8 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     // Protect AE transforms, timing and reference reports from older serializers.
     db.exec('PRAGMA user_version=6');
   }
+  migrateAccess(db,directory,version===6);
+  }catch(e){try{db.close();}catch{}throw e;}
   const clocks=createSportsClocks({db,monotonic});
   const security=createSecurity({db,now,workstation,event}),{auth,authenticate,requirePermission,requireWorkspace,canAccess,record}=security;
   const outputContext=Object.freeze({output:true});
@@ -240,8 +245,12 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     throw new ServiceError('Local operation is not supported.',404);
   }
 
+  const authorize=(token,permission)=>{const actor=authenticate(token);if(permission)requirePermission(actor,permission);return actor;};
+  const snapshot=token=>{authorize(token,'system.configure');const file=join(directory,'network-backup-'+randomUUID()+'.sqlite');try{db.prepare('VACUUM INTO ?').run(file);return readFileSync(file);}finally{try{unlinkSync(file);}catch{}}};
+  const recovery=createRecoveryStore({directory,snapshot,authorize,encrypt,decrypt,now});
   return {
-    settings,auth,outputContext,
+    settings,auth,outputContext,recovery,
+    assertRecoveryIdle(token){authorize(token,'system.configure');authorize(token,'users.manage');if(publishing)throw new ServiceError('Wait for output acknowledgement before restoring.',409);for(const p of db.prepare('SELECT id FROM projects').all())commands.assertIdle(p.id);},
     controlIdle:projectId=>commands.assertIdle(projectId),
     controlActor(token,projectId){const actor=authenticate(token);readProject(actor,projectId);return actor;},
     recordNetwork:(action,target,status,actor)=>record(action,target,status,actor,{projectId:target||null}),
@@ -250,7 +259,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     authorize(token,permission){const actor=authenticate(token);if(permission)requirePermission(actor,permission);return actor;},
     health(){try{return Number.isInteger(db.prepare('PRAGMA schema_version').get().schema_version);}catch{return false;}},
     async handle(request,context){try{return await route(request,context);}catch(e){const status=e instanceof ServiceError?e.status:e?.issues?400:500;if(status>=500)event('SERVICE_ERROR','failed');return json({error:e instanceof ServiceError?e.message:e?.issues?'Project validation failed. Existing data was preserved.':'The local service could not complete the operation.'},status);}},
-    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:6,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
+    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:7,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
     importPsd(draft,raw,token){
       const options=psdOptionsSchema.parse(raw),actor=authenticate(token);requirePermission(actor,'templates.import');requirePermission(actor,'graphics.create');
       const old=readProject(actor,options.projectId);commands.assertIdle(options.projectId);
@@ -261,7 +270,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       if(assets.length!==used.size)throw new ServiceError('PSD images are incomplete. Import the file again.');
       let total=0;for(const a of assets){const bytes=Buffer.from(a.bytes);total+=bytes.length;if(bytes.length>10000000||total>55000000||imageMime(bytes)!=='image/png')throw new ServiceError('Invalid PSD images.');}
       db.exec('BEGIN IMMEDIATE');try{
-        let text=JSON.stringify(scene);for(const a of assets){const id=randomUUID();db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,a.name,'image/png',Buffer.from(a.bytes),actor.user.id);text=text.split('/api/assets/'+a.id).join('/api/assets/'+id);}
+        let text=JSON.stringify(scene);for(const a of assets){const id=randomUUID();db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,a.name,'image/png',Buffer.from(a.bytes),actor.user.id);text=text.replace(/\/api\/assets\/([a-zA-Z0-9-]+)/g,(url,old)=>old===a.id?'/api/assets/'+id:url);}
         scene=sceneSchema.parse(JSON.parse(text));const project=validateProject({...old.project,scenes:[...old.project.scenes,scene]});checkProjectChanges(actor,old.project,project,requirePermission);validateAssets(actor,project);
         const revision=old.revision+1;db.prepare('UPDATE projects SET document=?,revision=?,updated_at=? WHERE id=?').run(JSON.stringify(project),revision,now(),project.id);
         for(const id of assetIds(scene))db.prepare('INSERT OR IGNORE INTO project_assets(project_id,asset_id) VALUES(?,?)').run(project.id,id);
@@ -278,26 +287,26 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       if(assets.length!==used.size)throw new ServiceError('AE images are incomplete. Import the file again.');
       let total=0;for(const a of assets){const bytes=Buffer.from(a.bytes);total+=bytes.length;if(bytes.length>10000000||total>55000000||imageMime(bytes)!=='image/png')throw new ServiceError('Invalid AE images.');}
       db.exec('BEGIN IMMEDIATE');try{
-        let text=JSON.stringify(scene);for(const a of assets){const id=randomUUID();db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,a.name,'image/png',Buffer.from(a.bytes),actor.user.id);text=text.split('/api/assets/'+a.id).join('/api/assets/'+id);}
+        let text=JSON.stringify(scene);for(const a of assets){const id=randomUUID();db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,a.name,'image/png',Buffer.from(a.bytes),actor.user.id);text=text.replace(/\/api\/assets\/([a-zA-Z0-9-]+)/g,(url,old)=>old===a.id?'/api/assets/'+id:url);}
         scene=sceneSchema.parse(JSON.parse(text));const project=validateProject({...old.project,scenes:[...old.project.scenes,scene]});checkProjectChanges(actor,old.project,project,requirePermission);validateAssets(actor,project);
         const revision=old.revision+1;db.prepare('UPDATE projects SET document=?,revision=?,updated_at=? WHERE id=?').run(JSON.stringify(project),revision,now(),project.id);
         for(const id of assetIds(scene))db.prepare('INSERT OR IGNORE INTO project_assets(project_id,asset_id) VALUES(?,?)').run(project.id,id);
         record('AE_IMPORT',scene.id,'success',actor,{projectId:project.id,mode:scene.importReport.mode,layers:scene.layers.length});db.exec('COMMIT');return{project,revision,sceneId:scene.id};
       }catch(e){db.exec('ROLLBACK');throw e;}
     },
-    exportProject(raw,token){
+    exportProject(raw,token,format='legacy'){
       const actor=authenticate(token);requirePermission(actor,'templates.export');const project=clocks.project(validateProject(raw)),assets=[],missing=[];
       if(db.prepare('SELECT id FROM projects WHERE id=?').get(project.id))requireWorkspace(actor,project.id);else requirePermission(actor,'projects.create');validateAssets(actor,project);
       for(const id of assetIds(project)){const a=db.prepare('SELECT id,name,mime,bytes FROM assets WHERE id=?').get(id);if(a)assets.push({...a,bytes:Buffer.from(a.bytes).toString('base64')});else missing.push(id);}
       if(missing.length)throw new ServiceError('Cannot export a complete project: '+missing.length+' image(s) are missing. Replace or upload them first.');
-      const document=JSON.stringify({format:'broadcastcg-project',version:1,project,assets},null,2);
+      const document=JSON.stringify(format==='package'?createProjectPackage(project,assets):{format:'broadcastcg-project',version:1,project,assets},null,2);
       if(Buffer.byteLength(document)>100000000)throw new ServiceError('Project package exceeds the current 100 MB limit.');
       return document;
     },
     inspectImport(text,token){
       const actor=authenticate(token);requirePermission(actor,'templates.import');requirePermission(actor,'projects.create');
       if(Buffer.byteLength(text)>100000000)throw new ServiceError('Project package exceeds 100 MB.');
-      const data=JSON.parse(text);
+      const data=unpackProjectPackage(JSON.parse(text));
       if(data.format&&data.format!=='broadcastcg-project')throw new ServiceError('Unsupported package format.');
       if(data.format&&data.version!==1)throw new ServiceError('Unsupported package version.');
       const project=validateProject(data.project||data),assets=data.format?(data.assets||[]):[];
@@ -309,16 +318,18 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       });
       const missing=assetIds(project).filter(id=>!ids.has(id)&&!canReadAsset(actor,id));
       const external=[...new Set([...JSON.stringify(project).matchAll(/https?:\/\/[^"\s]+/g)].map(m=>m[0]))];
-      return{project,assets:checked,missing,external};
+      return{project,assets:checked,missing,external,dependencies:projectDependencies(project)};
     },
-    importProject(inspected,token){
+    importProject(inspected,token,{save=false}={}){
       const actor=authenticate(token);requirePermission(actor,'templates.import');checkProjectChanges(actor,null,inspected.project,requirePermission);
       if(inspected.missing.length)throw new ServiceError('Import blocked: '+inspected.missing.length+' local image(s) are missing. Export a complete package from the original workstation.');
       // Remap embedded IDs; an imported package cannot overwrite another project's media.
-      let text=JSON.stringify(inspected.project);db.exec('BEGIN IMMEDIATE');
+      let text=JSON.stringify(inspected.project);const remapped=new Map();db.exec('BEGIN IMMEDIATE');
       try{
-        for(const a of inspected.assets){const id=randomUUID();db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,a.name,a.mime,a.bytes,actor.user.id);text=text.split('/api/assets/'+a.id).join('/api/assets/'+id);}
-        const project=validateProject(JSON.parse(text));project.id=randomUUID();project.name=project.name.slice(0,135)+' (imported)';db.exec('COMMIT');record('IMPORT',project.id,'success',actor);return project;
+        for(const a of inspected.assets){const id=randomUUID();db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,a.name,a.mime,a.bytes,actor.user.id);remapped.set(a.id,id);}
+        text=text.replace(/\/api\/assets\/([a-zA-Z0-9-]+)/g,(url,id)=>remapped.has(id)?'/api/assets/'+remapped.get(id):url);const project=validateProject(JSON.parse(text));project.id=randomUUID();project.name=project.name.slice(0,135)+' (imported)';
+        if(save){requirePermission(actor,'projects.create');db.prepare('INSERT INTO projects(id,name,document,revision,updated_at) VALUES(?,?,?,1,?)').run(project.id,project.name,JSON.stringify(project),now());for(const id of assetIds(project))db.prepare('INSERT INTO project_assets(project_id,asset_id) VALUES(?,?)').run(project.id,id);if(!actor.user.allWorkspaces)db.prepare('INSERT INTO workspace_grants(user_id,project_id) VALUES(?,?)').run(actor.user.id,project.id);settings.set('lastProject:'+actor.user.id,project.id);}
+        record('IMPORT',project.id,'success',actor);db.exec('COMMIT');return save?{project,revision:1}:project;
       }catch(e){db.exec('ROLLBACK');throw e;}
     },
     close(){commands.close();clocks.close();audit('APPLICATION_STOP','local','success');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.close();}

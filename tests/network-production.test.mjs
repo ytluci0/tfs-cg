@@ -9,7 +9,7 @@ import {createNetworkServer} from '../desktop/network-server.mjs';
 import {createRemoteAuthority,serverProfile} from '../desktop/network-client.mjs';
 import {createControlLeases} from '../desktop/control-leases.mjs';
 import {sealBackup,openBackup,secretCodec} from '../desktop/server-crypto.mjs';
-import {restoreServer} from '../desktop/server-host.mjs';
+import {restoreServer,loadServer} from '../desktop/server-host.mjs';
 import {defaultProject} from '../lib/studio-model.ts';
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<150;n++){if(await fn())return;await pause(20);}throw Error('Timed out waiting for network state.');}
@@ -58,5 +58,18 @@ test('HTTPS clients share authoritative state, pin before credentials, enforce l
  assert.equal((await admin.handle(new Request('broadcastcg://app/api/projects'),admin.outputContext)).status,403);assert.equal((await admin.handle(new Request('broadcastcg://app/api/program',{method:'POST',body:'{}'}),admin.outputContext)).status,403);
  server=await createNetworkServer({...options,port});await until(()=>admin.connected());assert.notEqual(server.status().epoch,oldEpoch);assert.equal(server.status().output,'offline');assert.equal(shown.length,2);assert.equal((await api(admin,'/api/commands',take)).value.duplicate,true);assert.equal((await api(admin,'/api/projects/'+project.id)).value.project.variables.homeScore,2);
  const target=join(directory,'backup');mkdirSync(target);writeFileSync(join(target,'server.json'),JSON.stringify({version:1,fingerprint,secretKey:randomBytes(32).toString('base64')}));await restoreServer(target,backup,'encrypted recovery passphrase');await assert.rejects(()=>restoreServer(target,backup,'encrypted recovery passphrase'),/empty database/);
- const recovered=await createNetworkServer({...options,directory:join(target,'data'),secretKey:restored.key});try{assert.throws(()=>recovered.service.authorize(login.token),e=>e.status===401);const recoveredLogin=await recovered.service.auth.login({username:'admin',password:'long test admin password'});assert.equal(recovered.service.networkSnapshot(recoveredLogin.token).projects.length,1);assert.equal(recovered.status().output,'offline');}finally{await recovered.close();}
+ const recovered=await createNetworkServer({...options,directory:join(target,'data'),secretKey:Buffer.from(loadServer(target).secretKey,'base64')});try{assert.throws(()=>recovered.service.authorize(login.token),e=>e.status===401);const recoveredLogin=await recovered.service.auth.login({username:'admin',password:'long test admin password'});assert.equal(recovered.service.networkSnapshot(recoveredLogin.token).projects.length,1);assert.equal(recovered.status().output,'offline');}finally{await recovered.close();}
+});
+test('server expiry disconnects an active client, rejects remembered access and accepts administrator renewal',async t=>{
+ const directory=mkdtempSync(join(tmpdir(),'broadcastcg-network-access-')),pfx=join(directory,'cert.pfx'),passphrase=randomBytes(24).toString('hex');
+ const fingerprint=execFileSync(resolve('desktop/assets/BroadcastCGHost.exe'),['certificate',pfx,passphrase],{windowsHide:true,encoding:'utf8'}).trim();let time=Date.now();
+ const bootstrapSecret=randomBytes(32).toString('hex'),server=await createNetworkServer({directory:join(directory,'data'),tls:{pfx:readFileSync(pfx),passphrase},secretKey:randomBytes(32),bootstrapSecret,port:0,heartbeatMs:500,now:()=>time});
+ const profile={name:'Expiry test',url:'https://127.0.0.1:'+server.address.port,fingerprint},admin=createRemoteAuthority({profile,settings:{},bootstrapSecret}),states=[],user=createRemoteAuthority({profile,settings:{},onState:s=>states.push(s)});
+ t.after(async()=>{admin.close();user.close();await server.close();assert.ok(directory.startsWith(join(tmpdir(),'broadcastcg-network-access-')));rmSync(directory,{recursive:true,force:true});});
+ const password='network access test passphrase';await admin.auth.setup({username:'owner',password});await until(()=>admin.connected());
+ const u=await admin.auth.createUser(null,{username:'recipient',role:'VIEWER',workspaceIds:[],password,accessExpiresAt:time+1000});await user.auth.login({username:u.username,password});await user.auth.changePassword(null,{currentPassword:password,password:password+' changed'});const session=await user.auth.login({username:u.username,password:password+' changed',remember:true});await until(()=>user.connected());
+ time+=1000;await until(()=>states.some(s=>s.sessionEnded));assert.equal(user.connected(),false);await assert.rejects(user.auth.me(),e=>e.status===401);await assert.rejects(user.auth.resume(session.rememberToken),e=>e.status===401);
+ await admin.auth.updateUser(null,{...u,accessExpiresAt:time+86400000});await user.auth.login({username:u.username,password:password+' changed'});await until(()=>user.connected());
+ const backup=await admin.recovery.create(null,{password,label:'Timed accounts'});assert.equal((await admin.recovery.verify(null,{id:backup.id,password})).accounts,2);assert.equal((await admin.recovery.list()).length,1);assert.equal((await admin.recovery.export(null,backup.id)).subarray(0,9).toString(),'BCGSBACK1');
+ await assert.rejects(user.recovery.list(),e=>e.status===403);
 });

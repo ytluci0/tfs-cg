@@ -20,6 +20,7 @@ sealed class BroadcastService : ServiceBase {
  protected override void OnStop(){stopping=true;if(child!=null&&!child.HasExited){try{File.WriteAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"BroadcastCG","Production","stop.request"),"");child.WaitForExit(10000);if(!child.HasExited)child.Kill();}catch{}}}
  static int Main(string[] args) {
   try{
+   if(args.Length==1&&args[0]=="common-data"){Console.WriteLine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));return 0;}
    if(args.Length==3&&args[0]=="certificate"){
     using(RSA rsa=RSA.Create(3072)){
      var request=new CertificateRequest("CN=BroadcastCG private production server",rsa,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);

@@ -20,7 +20,7 @@ export async function createNetworkServer({directory,tls,secretKey,bootstrapSecr
   outputUnconfirmed=true;const target=engine;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{waiters.delete(program.revision);const e=new ServiceError('Engine acknowledgement timed out. Output state is unconfirmed; no command was replayed.',504);e.unconfirmed=true;reject(e);},ackTimeout);waiters.set(program.revision,{target,timer,resolve:()=>{clearTimeout(timer);outputUnconfirmed=false;resolve();},reject});send(target,{type:'program',epoch,serverTime:now(),program});});
  }});
  leases=createControlLeases({settings:service.settings,authorize:(token,id)=>service.controlActor(token,id),assertIdle:service.controlIdle,record:service.recordNetwork,now});
- const status=()=>({protocol:1,version:'0.8.0',serverId,epoch,name,serverTime:now(),database:service.health()?'available':'offline',output:engine?'connected':'offline',outputUnconfirmed,engine:engine?{workstation:engine.actor.workstation,username:engine.actor.user.username}:null,clients:peers.size});
+ const status=()=>({protocol:1,version:'0.9.0',serverId,epoch,name,serverTime:now(),database:service.health()?'available':'offline',output:engine?'connected':'offline',outputUnconfirmed,engine:engine?{workstation:engine.actor.workstation,username:engine.actor.user.username}:null,clients:peers.size});
  function send(peer,message){if(!peer||peer.ws.readyState!==WebSocket.OPEN)return;if(peer.ws.bufferedAmount>2000000){peer.ws.close(1013,'Client is too slow');return;}peer.ws.send(JSON.stringify(message));}
  function disconnect(peer){peers.delete(peer);if(engine===peer){engine=null;outputUnconfirmed=true;for(const [id,w] of waiters){clearTimeout(w.timer);waiters.delete(id);const e=new ServiceError('Output workstation disconnected. Command result is unconfirmed; do not replay it.',503);e.unconfirmed=true;w.reject(e);}}}
  function snapshot(peer){try{
@@ -49,12 +49,13 @@ export async function createNetworkServer({directory,tls,secretKey,bootstrapSecr
   if(path==='/network/authorize'&&request.method==='POST'){const {permission}=await jsonBody(request);return asJSON({value:service.authorize(token,permission)});}
   if(path==='/network/locks'&&request.method==='POST'){const {projectId,operation}=await jsonBody(request);return asJSON({value:leases.operate(token,projectId,operation)});}
   if(path==='/network/diagnostics'&&request.method==='GET'){service.authorize(token,'diagnostics.view');return asJSON({...status(),storage:service.diagnostics(),ownership:'session leases; no automatic takeover',failover:'manual; no command replay'});}
-  if(path==='/network/backup'&&request.method==='POST'){const {password}=await jsonBody(request);service.authorize(token,'system.configure');return new Response(await sealBackup(service.backup(token),secretKey,password),{headers:{'Content-Type':'application/octet-stream'}});}
+  if(path==='/network/recovery'&&request.method==='POST'){const {action,data={}}=await jsonBody(request);if(!['list','create','verify','export'].includes(action))throw new ServiceError('Unsupported recovery operation.');if(action==='export')return new Response(service.recovery.export(token,data.id),{headers:{'Content-Type':'application/octet-stream'}});return asJSON({value:await service.recovery[action](token,data)});}
+  if(path==='/network/backup'&&request.method==='POST'){const {password}=await jsonBody(request);service.authorize(token,'system.configure');const bytes=await sealBackup(service.backup(token),secretKey,password);service.authorize(token,'system.configure');return new Response(bytes,{headers:{'Content-Type':'application/octet-stream'}});}
   if(path==='/network/import/psd'&&request.method==='POST'){const body=await jsonBody(request);return asJSON({value:service.importPsd(draftBytes(body.draft),body.options,token)});}
   if(path==='/network/import/ae'&&request.method==='POST'){const body=await jsonBody(request);return asJSON({value:service.importAe(draftBytes(body.draft),body.options,token)});}
-  if(path==='/network/export'&&request.method==='POST'){const body=await jsonBody(request);return asJSON({value:service.exportProject(body.project,token)});}
-  if(path==='/network/inspect'&&request.method==='POST'){const body=await jsonBody(request),{project,missing,external}=service.inspectImport(body.text,token);return asJSON({value:{project,missing,external}});}
-  if(path==='/network/import'&&request.method==='POST'){const body=await jsonBody(request);return asJSON({value:service.importProject(service.inspectImport(body.text,token),token)});}
+  if(path==='/network/export'&&request.method==='POST'){const body=await jsonBody(request);return asJSON({value:service.exportProject(body.project,token,body.format)});}
+  if(path==='/network/inspect'&&request.method==='POST'){const body=await jsonBody(request),{project,missing,external,dependencies}=service.inspectImport(body.text,token);return asJSON({value:{project,missing,external,dependencies}});}
+  if(path==='/network/import'&&request.method==='POST'){const body=await jsonBody(request);return asJSON({value:service.importProject(service.inspectImport(body.text,token),token,{save:body.save===true})});}
   if(path.startsWith('/api/'))return service.handle(request,{token});
   throw new ServiceError('Network operation is not supported.',404);
  }

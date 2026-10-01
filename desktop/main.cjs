@@ -5,10 +5,11 @@ const os=require('node:os');
 const {createPsdSessions}=require('./psd-session.cjs');
 const {createAeSessions}=require('./ae-session.cjs');
 const {restoreBounds}=require('./window-state.cjs');
+const {createEditorState}=require('./editor-state.cjs');
 const {createLocalService,ServiceError}=require('./app/service.cjs');
-const {createRemoteAuthority,serverProfile,provisionServer,loadServer,restoreServer}=require('./app/network-runtime.cjs');
+const {createRemoteAuthority,serverProfile,provisionServer,loadServer,restoreServer,managedPolicy,readManagedPolicy,commitRestore,completeRestore,recoverInterruptedRestore,inspectBackup}=require('./app/network-runtime.cjs');
 const {randomUUID,createHash}=require('node:crypto');
-const {spawn}=require('node:child_process');
+const {spawn,execFileSync}=require('node:child_process');
 
 app.setName('BroadcastCG');
 app.setAppUserModelId('local.broadcastcg.studio');
@@ -17,7 +18,8 @@ if(qa)app.setPath('userData',join(__dirname,'.cache','smoke-profile-'+Date.now()
 const dataDirectory=join(app.getPath('userData'),'data');
 protocol.registerSchemesAsPrivileged([{scheme:'broadcastcg',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 let studio,output,service,quitting=false,logPath,outputReady=false,lastOutputAck=null,outputUnconfirmed=false,powerBlock;
-let currentToken=null,psdSessions,aeSessions,localService,remote=null;
+let currentToken=null,psdSessions,aeSessions,localService,remote=null,managed=null,maintenance=false;
+const profiles=()=>managed?.profiles||localService.settings.get('serverProfiles',[]);
 let rememberFile=join(dataDirectory,'remembered-login.bin');
 const hostDirectory=join(app.getPath('userData'),'production-server');
 function clearRemember(){fs.rmSync(rememberFile,{force:true});}
@@ -28,6 +30,7 @@ function acceptSession(result){
   return result.session;
 }
 function authorize(permission){return service.authorize(currentToken,permission);}
+function sameSession(authority,token,permission){if(service!==authority||currentToken!==token)throw Error('Account or connection changed. Start the operation again.');return authority.authorize(token,permission);}
 function permittedOutput(displayId){authorize(displayId===undefined?'outputs.view':'outputs.configure');openOutput(displayId);}
 function menuOutput(displayId){try{permittedOutput(displayId);}catch(e){dialog.showMessageBox(studio,{type:'info',message:e.message});}}
 const pending=new Map();
@@ -44,6 +47,7 @@ async function handleRequest(request,outputRead=false){
   if(url.hostname!=='app'||url.username||url.password)return new Response('Forbidden',{status:403});
   const origin=request.headers.get('origin');
   if(origin&&origin!=='broadcastcg://app')return new Response('Forbidden',{status:403});
+  if(maintenance&&url.pathname.startsWith('/api/'))return Response.json({error:'Recovery maintenance is in progress.'},{status:503});
   if(url.pathname.startsWith('/api/'))return service.handle(request,outputRead?service.outputContext:{token:currentToken});
   if(!['GET','HEAD'].includes(request.method))return new Response('Method not allowed',{status:405});
   let pathname;try{pathname=decodeURIComponent(url.pathname);}catch{return new Response('Bad path',{status:400});}
@@ -90,15 +94,16 @@ function openOutput(displayId){
 }
 function status(){return remote?remote.status():{local:true,database:service?.health()?'available':'offline',output:outputReady?'connected':'offline',outputUnconfirmed,lastOutputAck,authentication:'local-accounts',network:'local-only'};}
 function activateProfile(id){
+ if(managed&&!managed.profiles.some(p=>p.id===id))throw Error('This installation requires an assigned production server.');
  remote?.close();remote=null;currentToken=null;service=localService;
- if(id){const profile=localService.settings.get('serverProfiles',[]).find(p=>p.id===id);if(!profile)throw Error('Saved server not found.');let bootstrapSecret='';try{const c=loadServer(hostDirectory);if(c.fingerprint===profile.fingerprint&&['127.0.0.1','localhost'].includes(new URL(profile.url).hostname))bootstrapSecret=c.bootstrapSecret;}catch{}
+ if(id){const profile=profiles().find(p=>p.id===id);if(!profile)throw Error('Saved server not found.');let bootstrapSecret='';try{const c=loadServer(hostDirectory);if(c.fingerprint===profile.fingerprint&&['127.0.0.1','localhost'].includes(new URL(profile.url).hostname))bootstrapSecret=c.bootstrapSecret;}catch{}
   const draftFile=user=>join(dataDirectory,'remote-draft-'+createHash('sha256').update(profile.id+':'+user).digest('hex')+'.bin');
   const recoveryStore={read(user){const file=draftFile(user);return fs.existsSync(file)?JSON.parse(safeStorage.decryptString(fs.readFileSync(file))):null;},write(user,value){if(!safeStorage.isEncryptionAvailable())throw Error('Windows draft protection is unavailable.');const file=draftFile(user);fs.writeFileSync(file+'.partial',safeStorage.encryptString(JSON.stringify(value)));fs.renameSync(file+'.partial',file);},clear(user){fs.rmSync(draftFile(user),{force:true});}};
   remote=createRemoteAuthority({profile,settings:localService.settings,workstation:settings().workstation,bootstrapSecret,recoveryStore,onState:state=>studio?.webContents.send('broadcastcg:network',state),onProgram:program=>{if(outputReady)output.webContents.send('broadcastcg:program',program);},onLost:message=>{outputUnconfirmed=true;studio?.webContents.send('broadcastcg:network',{error:message,status:status()});}});service=remote;
  }
  rememberFile=join(dataDirectory,id?'remembered-server-'+id+'.bin':'remembered-login.bin');localService.settings.set('activeServer',id||null);
 }
-function connectionInfo(){let host=null;try{const c=loadServer(hostDirectory);host={name:c.name,host:c.host,port:c.port,fingerprint:c.fingerprint,directory:hostDirectory,running:fs.existsSync(join(hostDirectory,'server.lock')),mode:'User background process (starts at Windows sign-in when enabled)'};}catch{}return{profiles:localService.settings.get('serverProfiles',[]),activeId:localService.settings.get('activeServer'),backupId:localService.settings.get('backupServer'),status:status(),host};}
+function connectionInfo(){let host=null;try{if(managed)throw Error('Managed client');const c=loadServer(hostDirectory);host={name:c.name,host:c.host,port:c.port,fingerprint:c.fingerprint,directory:hostDirectory,running:fs.existsSync(join(hostDirectory,'server.lock')),mode:'User background process (starts at Windows sign-in when enabled)'};}catch{}return{managed:!!managed,profiles:profiles(),activeId:localService.settings.get('activeServer'),backupId:localService.settings.get('backupServer'),status:status(),host};}
 async function startHost(){
  const c=loadServer(hostDirectory),probe=createRemoteAuthority({profile:{name:c.name,url:'https://127.0.0.1:'+c.port,fingerprint:c.fingerprint},settings:localService.settings});try{await probe.test();return;}catch{}finally{probe.close();}
  const log=fs.openSync(join(hostDirectory,'server.log'),'a');const child=spawn(process.execPath,[join(__dirname,'app/server-entry.cjs'),hostDirectory],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},windowsHide:true,detached:true,stdio:['ignore',log,log]});child.unref();fs.closeSync(log);
@@ -106,14 +111,40 @@ async function startHost(){
  throw Error('Server did not start. Check the server.log in its data folder.');
 }
 function settings(){return{workstation:os.hostname(),role:'Graphics operator',location:'',uiScale:1,startup:false,...service.settings.get('preferences',{}),displays:screen.getAllDisplays().map(d=>({id:d.id,label:d.label||'Display '+d.id,width:d.size.width,height:d.size.height,scaleFactor:d.scaleFactor}))};}
-function ipc(name,fn){ipcMain.handle('broadcastcg:'+name,async(event,...args)=>{if(!trustedStudio(event))throw Error('Operation not allowed.');return fn(...args);});}
+function ipc(name,fn){ipcMain.handle('broadcastcg:'+name,async(event,...args)=>{if(!trustedStudio(event))throw Error('Operation not allowed.');if(maintenance&&name!=='status'&&name!=='info')throw Error('Recovery maintenance is in progress.');return fn(...args);});}
+function createWorkstation(){return createLocalService({directory:dataDirectory,encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable.',503);return safeStorage.encryptString(value);},decrypt:bytes=>safeStorage.decryptString(bytes),beforePublish,confirmProgram,event:log,workstation:()=>service?.settings.get('preferences',{})?.workstation||os.hostname()});}
 function registerIpc(){
+ const editorState=createEditorState({settings:{get:(...v)=>localService.settings.get(...v),set:(...v)=>localService.settings.set(...v)},identity:()=>{const a=authorize('projects.view');return(localService.settings.get('activeServer')||'local')+':'+a.user.id;}});
+ ipc('editorState',(section,projectId,value)=>editorState.access(section,projectId,value));
+ ipc('recovery',async(action,data={})=>{
+  const actor=authorize('system.configure');authorize('users.manage');
+  if(actor.user.accessExpiresAt!==null)throw Error('Recovery administration requires an unlimited administrator account.');
+  if(action==='list')return{backups:await service.recovery.list(currentToken),local:!remote,automaticUpdates:false,version:app.getVersion()};
+  if(action==='create')return service.recovery.create(currentToken,data);
+  if(action==='verify')return service.recovery.verify(currentToken,data);
+  if(action==='export'){const authority=service,token=currentToken,bytes=await authority.recovery.export(token,data.id),result=await dialog.showSaveDialog(studio,{title:'Save encrypted recovery backup',defaultPath:'BroadcastCG-'+data.id+'.bcbackup',filters:[{name:'Encrypted BroadcastCG backup',extensions:['bcbackup']}]});if(result.canceled||!result.filePath)return false;sameSession(authority,token,'system.configure');sameSession(authority,token,'users.manage');fs.writeFileSync(result.filePath+'.partial',bytes);fs.renameSync(result.filePath+'.partial',result.filePath);return true;}
+  if(action==='inspectFile'||action==='restoreFile'){
+   if(action==='restoreFile'&&(remote||managed))throw Error('Restore a production server on its host while it is stopped.');
+   if(action==='restoreFile'){if(output&&!output.isDestroyed())throw Error('Close the output window before restoring.');localService.assertRecoveryIdle(currentToken);}
+   const token=currentToken,authority=service,result=await dialog.showOpenDialog(studio,{title:action==='restoreFile'?'Restore a local recovery backup':'Verify an encrypted backup',properties:['openFile'],filters:[{name:'Encrypted BroadcastCG backup',extensions:['bcbackup','bcserver']}]});if(result.canceled||!result.filePaths[0])return null;
+   const file=result.filePaths[0];if(fs.statSync(file).size>200000086)throw Error('Backup exceeds 200 MB.');const bytes=fs.readFileSync(file),report=await inspectBackup(join(dataDirectory,'recovery-work'),bytes,data.password);authority.authorize(token,'users.manage');
+   if(action==='inspectFile')return report;
+   const answer=await dialog.showMessageBox(studio,{type:'warning',title:'Restore local workstation',message:'Replace the current local accounts and workspaces with this verified backup?',detail:report.projects+' workspaces, '+report.accounts+' accounts, '+report.images+' images. A rollback database will be retained. All sessions will be revoked. No TAKE, sequence or output will be replayed. Sign in using an account from the backup after restoration.',buttons:['Cancel','Restore verified backup'],defaultId:0,cancelId:0});if(answer.response!==1)return null;
+   if(service!==authority||currentToken!==token)throw Error('Connection changed. Start the restore again.');if(output&&!output.isDestroyed())throw Error('Close output before restoring.');localService.assertRecoveryIdle(token);maintenance=true;
+   const defaults={preferences:{},serverProfiles:[],activeServer:null,backupServer:null,hostStartup:false,studioWindow:null,outputWindow:null},preferences=Object.fromEntries(Object.entries(defaults).map(([k,fallback])=>[k,localService.settings.get(k,fallback)??fallback]));let closed=false;
+   try{const prepared=await localService.recovery.prepareRestore(token,bytes,data.password);localService.assertRecoveryIdle(token);psdSessions.clear();aeSessions.clear();localService.close();closed=true;commitRestore(dataDirectory,prepared);service=localService=createWorkstation();closed=false;for(const [key,value] of Object.entries(preferences))localService.settings.set(key,value);completeRestore(dataDirectory);currentToken=null;clearRemember();log('RECOVERY_RESTORED','success');studio.webContents.reload();return{...report,restored:true};}
+   catch(error){if(closed||fs.existsSync(join(dataDirectory,'restore-journal.json'))){if(!closed){try{localService.close();}catch{}}recoverInterruptedRestore(dataDirectory);service=localService=createWorkstation();currentToken=null;clearRemember();studio.webContents.reload();}throw error;}finally{maintenance=false;}
+  }
+  throw Error('Unsupported recovery operation.');
+ });
  ipc('network',async(action,data={})=>{
   if(action==='info')return connectionInfo();
+  if(managed&&!['switch','attachOutput','releaseOutput','locks'].includes(action))throw Error('This installation is managed. Contact your administrator to change its servers.');
+  if(action==='exportManaged'){authorize('users.manage');authorize('system.configure');const policy=managedPolicy({format:'broadcastcg-managed-client',version:1,profiles:[data]});if(['localhost','127.0.0.1','[::1]'].includes(new URL(policy.profiles[0].url).hostname))throw Error('Use the server LAN address or VPN hostname that recipient PCs can reach.');const result=await dialog.showOpenDialog(studio,{title:'Choose a folder for the recipient setup kit',properties:['openDirectory','createDirectory']});if(result.canceled||!result.filePaths[0])return false;authorize('users.manage');const folder=join(result.filePaths[0],'BroadcastCG-client-'+Date.now());fs.mkdirSync(folder);fs.writeFileSync(join(folder,'production.bcclient'),JSON.stringify(policy,null,2));fs.copyFileSync(join(__dirname,'assets/Install-ManagedClient.ps1'),join(folder,'Install-ManagedClient.ps1'));fs.writeFileSync(join(folder,'README.txt'),'Install BroadcastCG 0.9 or later on the recipient PC. Keep the PC connected to your self-hosted server (LAN or private VPN). In an administrator Windows PowerShell session in this folder, run:\r\n.\\Install-ManagedClient.ps1 -Configuration .\\production.bcclient\r\nRestart BroadcastCG, then sign in with the account you created on the server. Change the temporary password at first sign-in.\r\nThe policy removes local mode and server editing. It contains no passwords. Windows administrators can remove this policy or replace the software; this is account access control, not tamper-proof DRM. To remove managed mode, an administrator may rename ProgramData\\BroadcastCG\\managed-client.json while the app is closed.\r\n');return folder;}
   if(action==='test'){const client=createRemoteAuthority({profile:serverProfile(data),settings:localService.settings});try{return await client.test();}finally{client.close();}}
   if(action==='save'){const value=serverProfile(data),profiles=localService.settings.get('serverProfiles',[]);if(profiles.length>=16&&!profiles.some(p=>p.id===value.id))throw Error('Keep up to 16 server profiles.');if(value.id===localService.settings.get('activeServer'))throw Error('Switch to local mode before changing the active server.');value.id=value.id||randomUUID();localService.settings.set('serverProfiles',[...profiles.filter(p=>p.id!==value.id),value]);return connectionInfo();}
   if(action==='backupProfile'){if(data.id&&!localService.settings.get('serverProfiles',[]).some(p=>p.id===data.id))throw Error('Choose a saved server.');localService.settings.set('backupServer',data.id||null);return connectionInfo();}
-  if(action==='switch'){if(outputReady)throw Error('Close the output window before switching authority.');if(data.id&&!localService.settings.get('serverProfiles',[]).some(p=>p.id===data.id))throw Error('Choose a saved server.');if(currentToken){try{await service.auth.endSession(currentToken);}catch{}}psdSessions.clear();aeSessions.clear();activateProfile(data.id);studio.webContents.reload();return true;}
+  if(action==='switch'){if(outputReady)throw Error('Close the output window before switching authority.');if(managed&&!profiles().some(p=>p.id===data.id))throw Error('Choose an assigned production server.');if(data.id&&!profiles().some(p=>p.id===data.id))throw Error('Choose a saved server.');if(currentToken){try{await service.auth.endSession(currentToken);}catch{}}psdSessions.clear();aeSessions.clear();activateProfile(data.id);studio.webContents.reload();return true;}
   if(action==='attachOutput'){authorize('outputs.configure');if(!remote)throw Error('Connect to a production server first.');if(!outputReady)throw Error('Open output first, then attach this workstation.');remote.attachOutput();return true;}
   if(action==='releaseOutput'){authorize('outputs.configure');remote?.releaseOutput();return true;}
   if(action==='locks'){if(!remote)throw Error('Ownership is available in server mode.');return remote.locks(data.projectId,data.operation);}
@@ -124,10 +155,10 @@ function registerIpc(){
    if(action==='hostStartup'){if(typeof data.enabled!=='boolean')throw Error('Invalid startup preference.');localService.settings.set('hostStartup',data.enabled);if(app.isPackaged)app.setLoginItemSettings({openAtLogin:data.enabled||settings().startup});}
    if(action==='startHost')await startHost();
    if(action==='stopHost'){fs.writeFileSync(join(hostDirectory,'stop.request'),'');for(let i=0;i<40&&fs.existsSync(join(hostDirectory,'server.lock'));i++)await new Promise(r=>setTimeout(r,250));if(fs.existsSync(join(hostDirectory,'server.lock')))throw Error('Server is still stopping. Inspect its log.');}
-   if(action==='restoreHost'){const result=await dialog.showOpenDialog(studio,{title:'Restore to empty production server',properties:['openFile'],filters:[{name:'Encrypted server backup',extensions:['bcserver']}]});if(!result.canceled&&result.filePaths[0]){const file=result.filePaths[0];if(fs.statSync(file).size>200000086)throw Error('Backup exceeds 200 MB.');await restoreServer(hostDirectory,fs.readFileSync(file),data.password);}}
+   if(action==='restoreHost'){const result=await dialog.showOpenDialog(studio,{title:'Restore stopped production server',properties:['openFile'],filters:[{name:'Encrypted server backup',extensions:['bcserver','bcbackup']}]});if(!result.canceled&&result.filePaths[0]){const file=result.filePaths[0];if(fs.statSync(file).size>200000086)throw Error('Backup exceeds 200 MB.');const bytes=fs.readFileSync(file),report=await inspectBackup(join(dataDirectory,'recovery-work'),bytes,data.password);const answer=await dialog.showMessageBox(studio,{type:'warning',title:'Replace stopped host data?',message:'Restore '+report.projects+' workspaces and '+report.accounts+' accounts?',detail:'The existing host database is retained for rollback. Sessions are revoked and no commands resume. The server certificate remains unchanged.',buttons:['Cancel','Restore host'],defaultId:0,cancelId:0});if(answer.response===1){if(!localService.auth.bootstrap().setupRequired)localService.authorize(currentToken,'users.manage');await restoreServer(hostDirectory,bytes,data.password,{replace:true});}}}
    return connectionInfo();
   }
-  if(action==='backup'){authorize('system.configure');if(!remote)throw Error('Connect to the production server first.');const bytes=await remote.backup(data.password),result=await dialog.showSaveDialog(studio,{title:'Encrypted production backup',defaultPath:'BroadcastCG-server.bcserver',filters:[{name:'Encrypted server backup',extensions:['bcserver']}]});if(result.canceled||!result.filePath)return false;fs.writeFileSync(result.filePath+'.partial',bytes);fs.renameSync(result.filePath+'.partial',result.filePath);return true;}
+  if(action==='backup'){authorize('system.configure');if(!remote)throw Error('Connect to the production server first.');const authority=service,token=currentToken,bytes=await remote.backup(data.password),result=await dialog.showSaveDialog(studio,{title:'Encrypted production backup',defaultPath:'BroadcastCG-server.bcserver',filters:[{name:'Encrypted server backup',extensions:['bcserver']}]});if(result.canceled||!result.filePath)return false;sameSession(authority,token,'system.configure');fs.writeFileSync(result.filePath+'.partial',bytes);fs.renameSync(result.filePath+'.partial',result.filePath);return true;}
   throw Error('Unsupported connection operation.');
  });
   ipc('auth',async(action,data={})=>{try{
@@ -144,7 +175,7 @@ function registerIpc(){
     else throw new ServiceError('Unknown account operation.',400);
     return {ok:true,value};
   }catch(error){return{ok:false,status:error.status||500,error:error.status?error.message:'The account operation failed.'};}});
-  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local LAN production',...status()};});
+  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Timed access, deployment and recovery',...status()};});
   ipc('status',()=>{authorize();return status();});ipc('settings',()=>{authorize();return settings();});
   ipc('saveSettings',value=>{
     authorize('system.configure');
@@ -155,20 +186,20 @@ function registerIpc(){
   });
   ipc('openOutput',displayId=>{if(displayId!==undefined&&!Number.isInteger(displayId))throw Error('Choose an available display.');permittedOutput(displayId);return true;});
   ipc('exportProject',async project=>{
-    const token=currentToken,text=await service.exportProject(project,token),result=await dialog.showSaveDialog(studio,{title:'Export complete local project',defaultPath:(project.name||'Project').replace(/[<>:"/\\|?*]/g,'_')+'.broadcastproject',filters:[{name:'BroadcastCG project with images',extensions:['broadcastproject']}]});
+    const token=currentToken,authority=service,text=await service.exportProject(project,token,'package'),result=await dialog.showSaveDialog(studio,{title:'Export complete local project',defaultPath:(project.name||'Project').replace(/[<>:"/\\|?*]/g,'_')+'.broadcastpkg',filters:[{name:'BroadcastCG portable project package',extensions:['broadcastpkg']}]});
     if(result.canceled||!result.filePath)return false;
-    await service.exportProject(project,token);
+    sameSession(authority,token,'templates.export');await authority.exportProject(project,token,'package');
     const temporary=result.filePath+'.partial';await fs.promises.writeFile(temporary,text,{flag:'w'});await fs.promises.rename(temporary,result.filePath);log('PROJECT_EXPORT');return true;
   });
   ipc('importProject',async()=>{
-    const token=currentToken;service.authorize(token,'templates.import');service.authorize(token,'projects.create');
-    const result=await dialog.showOpenDialog(studio,{title:'Import local project',properties:['openFile'],filters:[{name:'BroadcastCG / Frame project',extensions:['broadcastproject','json']}]});
+    const token=currentToken,authority=service;service.authorize(token,'templates.import');service.authorize(token,'projects.create');
+    const result=await dialog.showOpenDialog(studio,{title:'Import local project',properties:['openFile'],filters:[{name:'BroadcastCG / Frame project',extensions:['broadcastpkg','broadcastproject','json']}]});
     if(result.canceled||!result.filePaths[0])return null;
     const file=result.filePaths[0];if((await fs.promises.stat(file)).size>100000000)throw Error('Project package exceeds 100 MB.');
-    const inspected=await service.inspectImport(await fs.promises.readFile(file,'utf8'),token);
+    sameSession(authority,token,'templates.import');const inspected=await authority.inspectImport(await fs.promises.readFile(file,'utf8'),token);
     if(inspected.missing.length)throw Error('Import blocked: '+inspected.missing.length+' referenced image(s) are missing. Export a complete package from the original workstation.');
-    if(inspected.external.length){const answer=await dialog.showMessageBox(studio,{type:'warning',title:'External dependencies',message:'This project contains '+inspected.external.length+' external data or image URL(s). They require a network connection.',detail:'Embedded images are included. External feed credentials must be configured locally. No fonts or video files are included in this package version.',buttons:['Cancel','Import project'],defaultId:0,cancelId:0});if(answer.response!==1)return null;}
-    return service.importProject(inspected,token);
+    const dependencies=inspected.dependencies,answer=await dialog.showMessageBox(studio,{type:'info',title:'Review project package',message:inspected.project.name,detail:'Graphics, animations, variables, panels, sports configuration and embedded images will be imported as a new saved workspace.\n\nFonts required on this PC: '+(dependencies?.fonts?.join(', ')||'None')+'\nExternal data / image URLs: '+inspected.external.length+'\nFont files, video and feed credentials are not embedded. Configure dependencies before going on air. Existing projects and output are unchanged.',buttons:['Cancel','Import project'],defaultId:0,cancelId:0});if(answer.response!==1)return null;
+    sameSession(authority,token,'templates.import');return authority.importProject(inspected,token,{save:true});
   });
   ipc('preparePsd',async()=>{
     const token=currentToken;authorize('templates.import');authorize('graphics.create');
@@ -221,8 +252,10 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   app.on('second-instance',()=>{if(studio){if(studio.isMinimized())studio.restore();studio.show();studio.focus();}});
   app.whenReady().then(async()=>{
     fs.mkdirSync(dataDirectory,{recursive:true});logPath=join(dataDirectory,'diagnostics.log');
-    service=createLocalService({directory:dataDirectory,encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable.',503);return safeStorage.encryptString(value);},decrypt:bytes=>safeStorage.decryptString(bytes),beforePublish,confirmProgram,event:log,workstation:()=>service?.settings.get('preferences',{})?.workstation||os.hostname()});
-    localService=service;if(localService.settings.get('hostStartup',false)){try{await startHost();}catch{log('PRODUCTION_HOST_START_FAILED','failed');}}activateProfile(localService.settings.get('activeServer'));
+    const commonData=execFileSync(join(__dirname,'assets/BroadcastCGHost.exe'),['common-data'],{windowsHide:true,encoding:'utf8'}).trim();if(!isAbsolute(commonData))throw Error('Windows common data folder is unavailable.');managed=readManagedPolicy(join(commonData,'BroadcastCG','managed-client.json'));
+
+    recoverInterruptedRestore(dataDirectory);service=createWorkstation();
+    localService=service;if(!managed&&localService.settings.get('hostStartup',false)){try{await startHost();}catch{log('PRODUCTION_HOST_START_FAILED','failed');}}activateProfile(managed?(managed.profiles.find(p=>p.id===localService.settings.get('activeServer'))||managed.profiles[0]).id:localService.settings.get('activeServer'));
     psdSessions=createPsdSessions({workerPath:join(__dirname,'app','psd-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importPsd(draft,options,token)});
     aeSessions=createAeSessions({workerPath:join(__dirname,'app','ae-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importAe(draft,options,token)});
     if(fs.existsSync(rememberFile)){try{acceptSession(await service.auth.resume(safeStorage.decryptString(fs.readFileSync(rememberFile))));}catch(error){if(error.status!==503)clearRemember();log('REMEMBERED_LOGIN_UNAVAILABLE');}}

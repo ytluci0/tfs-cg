@@ -1,12 +1,56 @@
 {
   "appId": "local.broadcastcg.studio",
   "productName": "BroadcastCG",
-  "directories": { "output": "release", "buildResources": "assets" },
-  "files": ["main.cjs", "psd-session.cjs", "ae-session.cjs", "assets/BroadcastCG-AE-Export.jsx", "preload.cjs", "window-state.cjs", "app/**/*", "!app/smoke.cjs", "assets/icon.ico", "assets/BroadcastCGHost.exe", "assets/install-service.ps1", "assets/PSD-LICENSES.txt", "assets/NETWORK-LICENSES.txt", "package.json"],
+  "directories": {
+    "output": "release",
+    "buildResources": "assets"
+  },
+  "files": [
+    "main.cjs",
+    "psd-session.cjs",
+    "ae-session.cjs",
+    "assets/BroadcastCG-AE-Export.jsx",
+    "preload.cjs",
+    "window-state.cjs",
+    "app/**/*",
+    "!app/smoke.cjs",
+    "assets/icon.ico",
+    "assets/BroadcastCGHost.exe",
+    "assets/install-service.ps1",
+    "assets/PSD-LICENSES.txt",
+    "assets/NETWORK-LICENSES.txt",
+    "package.json",
+    "assets/Install-ManagedClient.ps1",
+    "editor-state.cjs"
+  ],
   "asar": true,
-  "extraResources": [{"from":"assets/BroadcastCGHost.exe","to":"server-tools/BroadcastCGHost.exe"},{"from":"assets/install-service.ps1","to":"server-tools/install-service.ps1"}],
+  "extraResources": [
+    {
+      "from": "assets/BroadcastCGHost.exe",
+      "to": "server-tools/BroadcastCGHost.exe"
+    },
+    {
+      "from": "assets/install-service.ps1",
+      "to": "server-tools/install-service.ps1"
+    },
+    {
+      "from": "assets/Install-ManagedClient.ps1",
+      "to": "server-tools/Install-ManagedClient.ps1"
+    }
+  ],
   "npmRebuild": false,
-  "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "assets/icon.ico", "artifactName": "BroadcastCG-Setup-x64.${ext}" },
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "icon": "assets/icon.ico",
+    "artifactName": "BroadcastCG-Setup-x64.${ext}"
+  },
   "nsis": {
     "oneClick": false,
     "perMachine": false,
@@ -16,6 +60,8 @@
     "deleteAppDataOnUninstall": false,
     "runAfterFinish": false
   },
-  "portable": { "artifactName": "BroadcastCG-Portable-x64.${ext}" },
+  "portable": {
+    "artifactName": "BroadcastCG-Portable-x64.${ext}"
+  },
   "publish": null
 }

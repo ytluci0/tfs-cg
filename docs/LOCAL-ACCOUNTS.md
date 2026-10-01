@@ -18,13 +18,17 @@ Open **Accounts & access → Users → Add user**. Assign a role, choose saved w
 
 Operator fields come from saved controls, their variable actions, data bindings and football components. An operator may update those values while preserving their types. The service checks the entire submitted project: posting a modified scene layout or panel definition directly does not bypass role restrictions. A program scene must match a saved graphic. Changing an API endpoint removes its stored request headers; configure credentials again for the new endpoint.
 
+## Access periods
+
+In **Accounts & access**, set a start date and expiry date or use 7/30/90/365-day presets. Blank expiry is unlimited. The active local/server authority enforces the deadline; existing sessions and remembered sign-ins cannot outlast it. Renew +30 days extends from the later of the current deadline or now. Access edits revoke sessions. One enabled unlimited administrator must remain. See [recipient setup and recovery](DEPLOYMENT-AND-ACCESS.md).
+
 ## Sessions and output
 
 Sessions expire after 30 minutes without user input or after 12 hours total. Background status/data polling does not keep them active. **Remember me** stores an encrypted, rotating sign-in token for 30 days in the current Windows account; restarting the app can use it to create a new session. Signing out removes that remembered sign-in. Password changes, password resets, access edits, disabling a user and session revocation invalidate affected sessions and remembered tokens. Revocation is immediate at the service; the screen locks on its next request or within the five-second status poll.
 
-**Accounts & access → Sessions** lists active local sessions and lets an administrator revoke them. Logout and expiry leave the current output graphic on screen. Delayed operator sequences stop when their workspace unmounts. Running panel clocks are still editor-side; they stop at logout. Closing the application closes output; reopening starts off air and never replays TAKE commands.
+**Accounts & access → Sessions** lists active local sessions and lets an administrator revoke them. Logout and expiry leave the current output graphic on screen. Authority-managed sequences recheck account access during waits and before further effects. Production clocks run on the authority and pause at their last checkpoint on application/server restart. Closing the application closes output; reopening starts off air and never replays TAKE commands.
 
-Unsaved recovery drafts belong to individual users. They are saved after a short debounce, and sign-out attempts to flush the latest draft. A recovery conflict can be opened as a new project only when the user has permission to create one. Program is independent of draft recovery. This is not a shared production service or an authoritative multi-operator clock.
+Unsaved recovery drafts belong to individual users. They are saved after a short debounce, and sign-out attempts to flush the latest draft. A recovery conflict can be opened as a new project only when the user has permission to create one. Program is independent of draft recovery. Optional [self-hosted production mode](LAN-PRODUCTION.md) provides shared state and authoritative clocks.
 
 ## Audit and storage
 
@@ -32,7 +36,7 @@ Audit history can be filtered by username, action, workstation, workspace ID and
 
 The service uses Node scrypt with N=131072, r=8, p=1, a random 16-byte salt and a 64-byte derived key. Password verification uses constant-time comparison. Only hashed session and remembered tokens are stored in the database. Raw access tokens stay in Electron main; the renderer receives safe session metadata. Windows DPAPI protects remembered sign-in and feed credentials on disk. Failed sign-ins have per-account and workstation-wide limits. This configuration follows the [OWASP password-storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
 
-The dedicated output partition can only read the current program and its local media. It cannot access accounts, other projects, settings or write endpoints. No listening HTTP server, cloud authentication or hosted runtime is used.
+The dedicated output partition can only read the current program and its local media. It cannot access accounts, other projects, settings or write endpoints. Local mode opens no listener. Optional production mode uses your own HTTPS server. No cloud authentication or hosted runtime is required.
 
 Data is in `%APPDATA%\BroadcastCG\data`. Upgrading schema 1 to schema 2 first makes a consistent SQLite backup under `backups`, then adds account/grant/session tables in a transaction. Unknown newer schema versions are rejected. In-place downgrade is unsupported. To restore a pre-upgrade backup, close the app and retain the entire current data directory before any manual restore; do not replace a live database or its WAL files.
 

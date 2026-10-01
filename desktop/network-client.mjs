@@ -60,9 +60,9 @@ export function createRemoteAuthority({profile,settings,workstation='LAN worksta
   else if(m.type==='output-attached'){engineId=m.id;onState({status:status()});}
   else if(m.type==='output-released'){engineId=null;onState({status:status()});}
   else if(m.type==='error')onState({error:m.error,status:status()});}catch{/* Malformed streams never dispatch actions. */}});
-  socket.on('close',code=>{if(ws!==socket)return;ws=null;engineId=null;lastSnapshot=0;onState({status:status()});onLost('Server connection lost. No commands will be retried.');if(code===4001){token=null;actor=null;return;}if(!closed&&token===activeToken)reconnect=setTimeout(connect,Math.min(10000,500*2**Math.min(attempt++,5)));});
+  socket.on('close',code=>{if(ws!==socket)return;ws=null;engineId=null;lastSnapshot=0;onState({status:status()});onLost('Server connection lost. No commands will be retried.');if(code===4001){token=null;actor=null;onState({status:status(),sessionEnded:true,error:'Your server session ended or access expired. Sign in again or contact the administrator.'});return;}if(!closed&&token===activeToken)reconnect=setTimeout(connect,Math.min(10000,500*2**Math.min(attempt++,5)));});
  }
- function authorize(_token,permission){if(!actor||_token!==token)throw new ServiceError('Sign in to this server.',401);if(actor.user.mustChangePassword)throw new ServiceError('Change your temporary password first.',403);if(permission&&!actor.user.permissions.includes(permission))throw new ServiceError('Your account does not have permission: '+permission+'.',403);return actor;}
+ function authorize(_token,permission){if(!actor||_token!==token)throw new ServiceError('Sign in to this server.',401);if(actor.user.accessExpiresAt!==null&&actor.user.accessExpiresAt<=Date.now()+offset)throw new ServiceError('Your access period has expired. Contact the administrator to renew it.',401);if(actor.user.mustChangePassword)throw new ServiceError('Change your temporary password first.',403);if(permission&&!actor.user.permissions.includes(permission))throw new ServiceError('Your account does not have permission: '+permission+'.',403);return actor;}
  function requireConnection(){if(!connected())throw new ServiceError('Server connection is offline or stale. Reconnect before changing production state. No action was sent.',503);}
  const auth=new Proxy({}, {get:(_target,action)=>async(...args)=>{
   if(action==='endSession')action='logout';let data=['login','setup'].includes(action)?{...args[0],workstation}:action==='resume'?{rememberToken:args[0],workstation}:args[1]||{};
@@ -73,7 +73,8 @@ export function createRemoteAuthority({profile,settings,workstation='LAN worksta
   return value;
  }});
  const draftBody=(draft,options)=>({draft:{...draft,assets:draft.assets.map(a=>({...a,bytes:Buffer.from(a.bytes).toString('base64')}))},options});
- return{auth,settings,authorize,outputContext,status,health:()=>connected(),connected,
+ const recovery={async list(){return(await json('/network/recovery',{method:'POST',body:{action:'list'}})).value;},async create(_token,data){return(await json('/network/recovery',{method:'POST',body:{action:'create',data}})).value;},async verify(_token,data){return(await json('/network/recovery',{method:'POST',body:{action:'verify',data}})).value;},async export(_token,id){const response=await request('/network/recovery',{method:'POST',body:{action:'export',data:{id}}});if(!response.ok)throw new ServiceError((await response.json()).error,response.status);return Buffer.from(await response.arrayBuffer());}};
+ return{auth,settings,authorize,outputContext,status,recovery,health:()=>connected(),connected,
   async test(){const start=Date.now(),value=await json('/network/status',{sessionToken:null,limit:100000});if(value.protocol!==1)throw new ServiceError('Incompatible production server protocol.');return{...value,latencyMs:Date.now()-start};},
   async handle(incoming,context){try{
    const url=new URL(incoming.url),output=context===outputContext;
@@ -93,9 +94,9 @@ export function createRemoteAuthority({profile,settings,workstation='LAN worksta
   acknowledge(revision){if(engineId&&connected())ws.send(JSON.stringify({type:'ack',revision}));},
   async importPsd(draft,options){requireConnection();return(await json('/network/import/psd',{method:'POST',body:draftBody(draft,options)})).value;},
   async importAe(draft,options){requireConnection();return(await json('/network/import/ae',{method:'POST',body:draftBody(draft,options)})).value;},
-  async exportProject(project){return(await json('/network/export',{method:'POST',body:{project}})).value;},
+  async exportProject(project,_token,format='legacy'){return(await json('/network/export',{method:'POST',body:{project,format}})).value;},
   async inspectImport(text){return{...(await json('/network/inspect',{method:'POST',body:{text}})).value,text};},
-  async importProject(inspected){requireConnection();return(await json('/network/import',{method:'POST',body:{text:inspected.text}})).value;},
+  async importProject(inspected,_token,{save=false}={}){requireConnection();return(await json('/network/import',{method:'POST',body:{text:inspected.text,save}})).value;},
   async backup(password){requireConnection();const response=await request('/network/backup',{method:'POST',body:{password}});if(!response.ok)throw new ServiceError((await response.json()).error,response.status);return Buffer.from(await response.arrayBuffer());},
   diagnostics:()=>json('/network/diagnostics'),
   close(){closed=true;stopSocket();agent.destroy();actor=null;token=null;},

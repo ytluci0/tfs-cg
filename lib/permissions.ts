@@ -17,5 +17,5 @@ export const rolePermissions:Record<string,Permission[]>={
  ENGINEER:['projects.view','data.configure','data.fetch','outputs.view','outputs.configure','integrations.configure','system.configure','audit.view','diagnostics.view'],
  VIEWER:['projects.view','outputs.view'],
 };
-export type LocalUser={id:string;username:string;displayName:string;role:string;enabled:boolean;allWorkspaces:boolean;workspaceIds:string[];extraPermissions:Permission[];deniedPermissions:Permission[];permissions:Permission[];mustChangePassword:boolean;lastLogin:number|null};
-export type LocalSession={user:LocalUser;sessionId:string;expiresAt:number;idleExpiresAt:number};
+export type LocalUser={id:string;username:string;displayName:string;role:string;enabled:boolean;accessStartsAt:number|null;accessExpiresAt:number|null;accessStatus:'active'|'scheduled'|'expired'|'disabled';allWorkspaces:boolean;workspaceIds:string[];extraPermissions:Permission[];deniedPermissions:Permission[];permissions:Permission[];mustChangePassword:boolean;lastLogin:number|null};
+export type LocalSession={user:LocalUser;sessionId:string;expiresAt:number;idleExpiresAt:number;serverTime?:number};

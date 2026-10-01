@@ -61,7 +61,7 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
  async function hashOperation(fn){if(hashing)throw new ServiceError('Authentication is busy. Please retry shortly.',429);hashing=true;try{return await fn();}finally{hashing=false;}}
  function userView(row){
   const base=JSON.parse(db.prepare('SELECT permissions FROM auth_roles WHERE id=?').get(row.role)?.permissions||'[]'),extra=JSON.parse(row.extra_permissions),denied=JSON.parse(row.denied_permissions);
-  return{id:row.id,username:row.username,displayName:row.display_name,role:row.role,enabled:!!row.enabled,allWorkspaces:!!row.all_workspaces,workspaceIds:db.prepare('SELECT project_id FROM workspace_grants WHERE user_id=?').all(row.id).map(r=>r.project_id),extraPermissions:extra,deniedPermissions:denied,permissions:[...new Set([...base,...extra])].filter(p=>!denied.includes(p)),mustChangePassword:!!row.must_change_password,lastLogin:row.last_login};
+  return{id:row.id,username:row.username,displayName:row.display_name,role:row.role,enabled:!!row.enabled,accessStartsAt:row.access_starts_at??null,accessExpiresAt:row.access_expires_at??null,accessStatus:!row.enabled?'disabled':row.access_starts_at>now()?'scheduled':row.access_expires_at!==null&&row.access_expires_at<=now()?'expired':'active',allWorkspaces:!!row.all_workspaces,workspaceIds:db.prepare('SELECT project_id FROM workspace_grants WHERE user_id=?').all(row.id).map(r=>r.project_id),extraPermissions:extra,deniedPermissions:denied,permissions:[...new Set([...base,...extra])].filter(p=>!denied.includes(p)),mustChangePassword:!!row.must_change_password,lastLogin:row.last_login};
  }
  function record(action,target,status,actor=null,{projectId=null,previous=null,next=null,detail=''}={}){
   db.prepare('INSERT INTO events(time,action,target,status,detail,user_id,username,workstation,project_id,previous_value,next_value) VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(now(),action,String(target).slice(0,200),status,detail,actor?.user.id||null,actor?.user.username||null,actor?.workstation||workstation(),projectId,previous===null?null:JSON.stringify(previous).slice(0,4000),next===null?null:JSON.stringify(next).slice(0,4000));event(action,status);
@@ -69,22 +69,38 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
  function authenticate(token,{allowPasswordChange=false}={}){
   if(typeof token!=='string'||token.length<30||token.length>100)throw new ServiceError('Sign in to your local account.',401);
   const session=db.prepare('SELECT * FROM auth_sessions WHERE token_hash=?').get(tokenHash(token)),time=now();
-  if(!session||session.revoked_at||session.expires_at<=time||session.idle_expires_at<=time)throw new ServiceError('Your session ended. Sign in again.',401);
+  if(!session||session.revoked_at)throw new ServiceError('Your session ended. Sign in again.',401);
   const row=db.prepare('SELECT * FROM auth_users WHERE id=?').get(session.user_id);
   if(!row?.enabled)throw new ServiceError('Your session ended. Sign in again.',401);
+  checkAccessWindow(row);
+  if(session.expires_at<=time||session.idle_expires_at<=time)throw new ServiceError('Your session ended. Sign in again.',401);
   const actor={user:userView(row),sessionId:session.id,expiresAt:session.expires_at,idleExpiresAt:session.idle_expires_at,workstation:session.workstation};
   if(actor.user.mustChangePassword&&!allowPasswordChange)throw new ServiceError('Change your temporary password before opening a workspace.',403);
   return actor;
  }
- function publicSession(actor){const {workstation:ignored,...view}=actor;return view;}
+ function publicSession(actor){const {workstation:ignored,...view}=actor;return{...view,serverTime:now()};}
  function requirePermission(actor,permission){if(!actor?.user.permissions.includes(permission)){record('ACCESS_DENIED',permission,'denied',actor);throw new ServiceError('Your account does not have permission: '+(permissionLabels[permission]||permission)+'.',403);}}
  function canAccess(actor,projectId){return !!actor&&(actor.user.allWorkspaces||actor.user.workspaceIds.includes(projectId));}
  function requireWorkspace(actor,id){requirePermission(actor,'projects.view');if(typeof id!=='string'||!canAccess(actor,id))throw new ServiceError('This workspace is not assigned to your account.',403);}
  function revokeUser(id){db.prepare('UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL').run(now(),id);db.prepare('DELETE FROM auth_remember WHERE user_id=?').run(id);}
+ function checkAccessWindow(row){
+  if(row.access_starts_at!==null&&row.access_starts_at>now())throw new ServiceError('Your access has not started yet. Contact the administrator.',401);
+  if(row.access_expires_at!==null&&row.access_expires_at<=now()){
+   const active=db.prepare('SELECT id FROM auth_sessions WHERE user_id=? AND revoked_at IS NULL LIMIT 1').get(row.id);revokeUser(row.id);
+   if(active)record('ACCESS_EXPIRED',row.id,'expired',{user:userView(row),workstation:workstation()},{next:{accessExpiresAt:row.access_expires_at}});
+   throw new ServiceError('Your access period has expired. Contact the administrator to renew it.',401);
+  }
+ }
+ function limitDelegation(actor,c,old){
+  const end=actor.user.accessExpiresAt;if(end===null)return;
+  if(old&&(old.access_expires_at===null||old.access_expires_at>end)||c&&(c.accessExpiresAt===null||c.accessExpiresAt>end))throw new ServiceError('A time-limited administrator cannot grant or modify access beyond their own expiry.',403);
+ }
  function issue(row,remember=false,station=workstation()){
+  checkAccessWindow(row);
   const time=now(),token=tokens(),id=randomUUID(),machine=string(station,100);let rememberToken=null,rememberId=null;
-  if(remember&&!row.must_change_password){rememberToken=tokens();rememberId=randomUUID();db.prepare('INSERT INTO auth_remember(id,user_id,token_hash,expires_at,workstation) VALUES(?,?,?,?,?)').run(rememberId,row.id,tokenHash(rememberToken),time+REMEMBER_MS,machine);}
-  db.prepare('INSERT INTO auth_sessions(id,user_id,token_hash,created_at,last_seen,expires_at,idle_expires_at,remember_id,workstation) VALUES(?,?,?,?,?,?,?,?,?)').run(id,row.id,tokenHash(token),time,time,time+SESSION_MS,time+IDLE_MS,rememberId,machine);
+  const deadline=row.access_expires_at??Number.MAX_SAFE_INTEGER;
+  if(remember&&!row.must_change_password){rememberToken=tokens();rememberId=randomUUID();db.prepare('INSERT INTO auth_remember(id,user_id,token_hash,expires_at,workstation) VALUES(?,?,?,?,?)').run(rememberId,row.id,tokenHash(rememberToken),Math.min(time+REMEMBER_MS,deadline),machine);}
+  db.prepare('INSERT INTO auth_sessions(id,user_id,token_hash,created_at,last_seen,expires_at,idle_expires_at,remember_id,workstation) VALUES(?,?,?,?,?,?,?,?,?)').run(id,row.id,tokenHash(token),time,time,Math.min(time+SESSION_MS,deadline),Math.min(time+IDLE_MS,deadline),rememberId,machine);
   db.prepare('UPDATE auth_users SET last_login=? WHERE id=?').run(time,row.id);
   const actor=authenticate(token,{allowPasswordChange:true});record('LOGIN',row.id,'success',actor);return{token,rememberToken,session:publicSession(actor)};
  }
@@ -95,7 +111,9 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
   const displayName=string(data.displayName||data.username),extra=validPermissionList(data.extraPermissions||[]),denied=validPermissionList(data.deniedPermissions||[]);
   if(data.role==='ADMIN'&&denied.length)throw new ServiceError('Administrators must retain full permissions. Choose another role to restrict access.');
   if(!Array.isArray(data.workspaceIds)||data.workspaceIds.length>500||data.workspaceIds.some(id=>typeof id!=='string'||!db.prepare('SELECT id FROM projects WHERE id=?').get(id)))throw new ServiceError('Choose existing workspaces.');
-  return{username:username(data.username),displayName,role:data.role,enabled:data.enabled!==false,allWorkspaces:data.role==='ADMIN'||data.allWorkspaces===true,extra,denied,workspaceIds:[...new Set(data.workspaceIds)]};
+  const date=value=>{if(value===undefined||value===null||value==='')return null;if(!Number.isSafeInteger(value)||value<0||value>253402300799999)throw new ServiceError('Choose a valid access date.');return value;};
+  const accessStartsAt=date(data.accessStartsAt),accessExpiresAt=date(data.accessExpiresAt);if(accessStartsAt!==null&&accessExpiresAt!==null&&accessExpiresAt<=accessStartsAt)throw new ServiceError('Access must end after its start date.');
+  return{username:username(data.username),displayName,role:data.role,enabled:data.enabled!==false,accessStartsAt,accessExpiresAt,allWorkspaces:data.role==='ADMIN'||data.allWorkspaces===true,extra,denied,workspaceIds:[...new Set(data.workspaceIds)]};
  }
  function writeGrants(id,ids){db.prepare('DELETE FROM workspace_grants WHERE user_id=?').run(id);for(const projectId of ids)db.prepare('INSERT INTO workspace_grants(user_id,project_id) VALUES(?,?)').run(id,projectId);}
  const auth={
@@ -136,23 +154,24 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
    const hash=await passwordHash(data.password);authenticate(token,{allowPasswordChange:true});
    db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE auth_users SET password_hash=?,must_change_password=0 WHERE id=?').run(hash,actor.user.id);revokeUser(actor.user.id);record('PASSWORD_CHANGED',actor.user.id,'success',actor);const result=issue(db.prepare('SELECT * FROM auth_users WHERE id=?').get(actor.user.id),false,actor.workstation);db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}
   });},
-  catalog(token){const actor=authenticate(token);requirePermission(actor,'users.manage');return{permissions:permissionLabels,roles:rolePermissions,workspaces:db.prepare('SELECT id,name FROM projects ORDER BY name').all().filter(p=>canAccess(actor,p.id))};},
+  catalog(token){const actor=authenticate(token);requirePermission(actor,'users.manage');return{serverTime:now(),permissions:permissionLabels,roles:rolePermissions,workspaces:db.prepare('SELECT id,name FROM projects ORDER BY name').all().filter(p=>canAccess(actor,p.id))};},
   users(token){const actor=authenticate(token);requirePermission(actor,'users.manage');return db.prepare('SELECT * FROM auth_users ORDER BY username').all().map(userView);},
   async createUser(token,data){return hashOperation(async()=>{
-   let actor=authenticate(token);requirePermission(actor,'users.manage');const c=config(data),hash=await passwordHash(data.password);actor=authenticate(token);requirePermission(actor,'users.manage');
+   let actor=authenticate(token);requirePermission(actor,'users.manage');const c=config(data);limitDelegation(actor,c);const hash=await passwordHash(data.password);actor=authenticate(token);requirePermission(actor,'users.manage');limitDelegation(actor,c);
    if(db.prepare('SELECT id FROM auth_users WHERE username=?').get(c.username))throw new ServiceError('Username already exists.',409);
-   const id=randomUUID();db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO auth_users(id,username,display_name,password_hash,role,enabled,all_workspaces,extra_permissions,denied_permissions,must_change_password,created_at) VALUES(?,?,?,?,?,?,?,?,?,1,?)').run(id,c.username,c.displayName,hash,c.role,Number(c.enabled),Number(c.allWorkspaces),JSON.stringify(c.extra),JSON.stringify(c.denied),now());writeGrants(id,c.workspaceIds);record('USER_CREATED',id,'success',actor,{next:{username:c.username,role:c.role}});db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}return userView(db.prepare('SELECT * FROM auth_users WHERE id=?').get(id));
+   const id=randomUUID();db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO auth_users(id,username,display_name,password_hash,role,enabled,all_workspaces,extra_permissions,denied_permissions,must_change_password,created_at,access_starts_at,access_expires_at) VALUES(?,?,?,?,?,?,?,?,?,1,?,?,?)').run(id,c.username,c.displayName,hash,c.role,Number(c.enabled),Number(c.allWorkspaces),JSON.stringify(c.extra),JSON.stringify(c.denied),now(),c.accessStartsAt,c.accessExpiresAt);writeGrants(id,c.workspaceIds);record('USER_CREATED',id,'success',actor,{next:{username:c.username,role:c.role,accessStartsAt:c.accessStartsAt,accessExpiresAt:c.accessExpiresAt}});db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}return userView(db.prepare('SELECT * FROM auth_users WHERE id=?').get(id));
   });},
   updateUser(token,data){
-   const actor=authenticate(token);requirePermission(actor,'users.manage');const c=config(data),old=db.prepare('SELECT * FROM auth_users WHERE id=?').get(data.id);if(!old)throw new ServiceError('User not found.',404);
+   const actor=authenticate(token);requirePermission(actor,'users.manage');const old=db.prepare('SELECT * FROM auth_users WHERE id=?').get(data.id);if(!old)throw new ServiceError('User not found.',404);const c=config({accessStartsAt:old.access_starts_at,accessExpiresAt:old.access_expires_at,...data});
+   limitDelegation(actor,c,old);
    if(old.id===actor.user.id&&!c.enabled)throw new ServiceError('You cannot disable your own active account.');
-   if(old.role==='ADMIN'&&old.enabled&&(!c.enabled||c.role!=='ADMIN')&&!db.prepare("SELECT id FROM auth_users WHERE id<>? AND enabled=1 AND role='ADMIN' LIMIT 1").get(old.id))throw new ServiceError('Keep at least one enabled administrator.');
+   if(old.role==='ADMIN'&&old.enabled&&(!c.enabled||c.role!=='ADMIN'||c.accessExpiresAt!==null||c.accessStartsAt>now())&&!db.prepare("SELECT id FROM auth_users WHERE id<>? AND enabled=1 AND role='ADMIN' AND access_expires_at IS NULL AND (access_starts_at IS NULL OR access_starts_at<=?) LIMIT 1").get(old.id,now()))throw new ServiceError('Keep at least one enabled administrator with unlimited access.');
    const duplicate=db.prepare('SELECT id FROM auth_users WHERE username=? AND id<>?').get(c.username,old.id);if(duplicate)throw new ServiceError('Username already exists.',409);
-   db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE auth_users SET username=?,display_name=?,role=?,enabled=?,all_workspaces=?,extra_permissions=?,denied_permissions=? WHERE id=?').run(c.username,c.displayName,c.role,Number(c.enabled),Number(c.allWorkspaces),JSON.stringify(c.extra),JSON.stringify(c.denied),old.id);writeGrants(old.id,c.workspaceIds);revokeUser(old.id);record('USER_UPDATED',old.id,'success',actor,{previous:{role:old.role,enabled:!!old.enabled},next:{role:c.role,enabled:c.enabled,allWorkspaces:c.allWorkspaces,workspaceIds:c.workspaceIds,extra:c.extra,denied:c.denied}});db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}return userView(db.prepare('SELECT * FROM auth_users WHERE id=?').get(old.id));
+   db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE auth_users SET username=?,display_name=?,role=?,enabled=?,all_workspaces=?,extra_permissions=?,denied_permissions=?,access_starts_at=?,access_expires_at=? WHERE id=?').run(c.username,c.displayName,c.role,Number(c.enabled),Number(c.allWorkspaces),JSON.stringify(c.extra),JSON.stringify(c.denied),c.accessStartsAt,c.accessExpiresAt,old.id);writeGrants(old.id,c.workspaceIds);revokeUser(old.id);record('USER_UPDATED',old.id,'success',actor,{previous:{role:old.role,enabled:!!old.enabled,accessStartsAt:old.access_starts_at,accessExpiresAt:old.access_expires_at},next:{role:c.role,enabled:c.enabled,accessStartsAt:c.accessStartsAt,accessExpiresAt:c.accessExpiresAt,allWorkspaces:c.allWorkspaces,workspaceIds:c.workspaceIds,extra:c.extra,denied:c.denied}});db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}return userView(db.prepare('SELECT * FROM auth_users WHERE id=?').get(old.id));
   },
   async resetPassword(token,data){return hashOperation(async()=>{
    let actor=authenticate(token);requirePermission(actor,'users.manage');if(data.id===actor.user.id)throw new ServiceError('Use Change password for your own account.');
-   const hash=await passwordHash(data.password);actor=authenticate(token);requirePermission(actor,'users.manage');if(!db.prepare('SELECT id FROM auth_users WHERE id=?').get(data.id))throw new ServiceError('User not found.',404);
+   const hash=await passwordHash(data.password);actor=authenticate(token);requirePermission(actor,'users.manage');const target=db.prepare('SELECT * FROM auth_users WHERE id=?').get(data.id);if(!target)throw new ServiceError('User not found.',404);limitDelegation(actor,null,target);
    db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE auth_users SET password_hash=?,must_change_password=1 WHERE id=?').run(hash,data.id);revokeUser(data.id);record('PASSWORD_RESET',data.id,'success',actor);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}return true;
   });},
   sessions(token){const actor=authenticate(token);requirePermission(actor,'users.manage');return db.prepare('SELECT s.id,s.user_id,u.username,s.workstation,s.created_at,s.last_seen,s.expires_at,s.idle_expires_at FROM auth_sessions s JOIN auth_users u ON u.id=s.user_id WHERE s.revoked_at IS NULL AND s.expires_at>? AND s.idle_expires_at>? ORDER BY s.last_seen DESC').all(now(),now());},
