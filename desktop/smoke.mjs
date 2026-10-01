@@ -11,6 +11,7 @@ import {commandSmoke} from './command-smoke.mjs';
 import {networkSmoke} from './network-smoke.mjs';
 import {recoverySmoke} from './recovery-smoke.mjs';
 import {outputSmoke} from './output-smoke.mjs';
+import {ndiSmoke} from './ndi-smoke.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await sleep(100);}throw Error('Renderer readiness timed out.');}
 export async function run({app,studio,dialog,openOutput,getOutput,service,directory}){
@@ -33,11 +34,18 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  assert.equal((await api('/api/program',command)).status,503);openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());
  const take=await api('/api/program',command);assert.equal(take.status,200,JSON.stringify(take));
  assert.equal(await getOutput().webContents.executeJavaScript('document.querySelectorAll("svg[data-testid=graphic]").length'),1);checks.push('native TAKE and renderer acknowledgement');
+ // Delay one already-fetched snapshot across a newer pushed TAKE.
+ await getOutput().webContents.executeJavaScript(`(()=>{const original=window.fetch;let held=false;window.fetch=async(...args)=>{const response=await original(...args);if(!held&&String(args[0]).includes('/api/program')){held=true;window.qaPollWaiting=true;return new Promise(resolve=>{window.qaReleasePoll=()=>{window.fetch=original;resolve(response);};});}return response;};})()`);
+ await until(()=>getOutput().webContents.executeJavaScript('!!window.qaPollWaiting'));
+ const freshTake=await api('/api/program',command);assert.equal(freshTake.status,200);
+ await getOutput().webContents.executeJavaScript('window.qaReleasePoll()');await sleep(150);
+ assert.equal(await getOutput().webContents.executeJavaScript('document.querySelector("main").dataset.revision'),freshTake.value.revision);checks.push('A delayed desktop poll cannot replace a newer pushed TAKE');
  await commandSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await sportsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,getOutput});
  await psdSmoke({studio,dialog,js,api,reload,capture,checks,sleep,until,project:p,directory,getOutput});
  await aeSmoke({studio,dialog,js,api,reload,capture,checks,sleep,until,project:p,directory,getOutput});
  await outputSmoke({js,api,capture,checks,sleep,until});
+ await ndiSmoke({js,api,capture,checks});
  assert.equal((await api('/api/program',command)).status,200);
  await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Accounts & access').click()");await until(()=>js("document.querySelector('.account-table tbody tr')!==null"));await capture('accounts-admin.png');
  const viewer=await auth('createUser',{username:'qa_viewer',displayName:'QA Viewer',password,role:'VIEWER',enabled:true,allWorkspaces:false,workspaceIds:[p.id]});
@@ -51,6 +59,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  assert.equal((await api('/api/projects',{project:p,revision:1})).status,403);
  const preferences=await js('window.broadcastCG.settings()');await assert.rejects(()=>js(`window.broadcastCG.saveSettings(${JSON.stringify(preferences)})`),/permission/);
  await assert.rejects(()=>js("window.broadcastCG.broadcastOutput('start',{})"),/permission/);
+ await assert.rejects(()=>js("window.broadcastCG.broadcastOutput('ndiStart',{})"),/permission/);
  await assert.rejects(()=>js("window.broadcastCG.broadcastOutput('obsConnect',{})"),/permission/);
  assert.equal((await js("window.broadcastCG.broadcastOutput('status')")).url,null);
  assert.equal((await api('/api/program',command)).status,403);await capture('accounts-viewer.png');checks.push('temporary password required; Viewer API and native settings denied');

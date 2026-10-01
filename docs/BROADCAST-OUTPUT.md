@@ -1,6 +1,6 @@
 # Phase 10A — local broadcast output (0.10.0)
 
-BroadcastCG can send transparent graphics to **OBS Browser Source on the same Windows PC**. This is the first external output adapter. Direct NDI, SDI cards, genlock, redundant engines, audio and hardware fill/key are not implemented. Phase 10B remains equipment and physical network qualification; this release does not claim full broadcast qualification.
+BroadcastCG can send transparent graphics to **OBS Browser Source on the same Windows PC**. This is the first external output adapter. Version 0.11.0 also adds [direct NDI output](NDI-OUTPUT.md). SDI cards, genlock, redundant engines, audio and hardware fill/key are not implemented. Phase 10B remains equipment and physical network qualification; this release does not claim full broadcast qualification.
 
 ## Operate it
 
@@ -51,4 +51,4 @@ Measured on 1 October 2026, Windows 11, NVIDIA RTX 3070 Ti, OBS 32.2.2:
 
 These are measurements of this small generated workload on one PC, not a performance guarantee or an all-day show test. Full sample traces are retained in the workspace QA cache; `desktop/release/output-qualification.json` contains the release summary.
 
-Remaining Phase 10B work: selected native NDI/SDI adapter and its SDK/device requirements, real recipient/operator/output PCs, long-duration show workloads, GPU/monitor-loss recovery, hardware latency/frame timing, genlock/fill/key and redundant playout. Publisher signing and the clean Windows device installation matrix also remain open. Adobe plugin work remains deferred.
+Remaining Phase 10B work after the NDI adapter: selected SDI adapter and its SDK/device requirements, real recipient/operator/output PCs, long-duration show workloads, GPU/monitor-loss recovery, hardware latency/frame timing, genlock/fill/key and redundant playout. Publisher signing and the clean Windows device installation matrix also remain open. Adobe plugin work remains deferred.

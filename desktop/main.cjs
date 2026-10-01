@@ -7,6 +7,8 @@ const {createAeSessions}=require('./ae-session.cjs');
 const {restoreBounds}=require('./window-state.cjs');
 const {createEditorState}=require('./editor-state.cjs');
 const {createOutputController}=require('./output-controller.cjs');
+const {createNdiController}=require('./ndi-controller.cjs');
+const {detectNdi,ndiConfig}=require('./ndi-config.cjs');
 const {outputConfig}=require('./app/output-config.cjs');
 const {connectObs}=require('./app/obs-client.cjs');
 const {createLocalService,ServiceError}=require('./app/service.cjs');
@@ -22,7 +24,8 @@ const dataDirectory=join(app.getPath('userData'),'data');
 protocol.registerSchemesAsPrivileged([{scheme:'broadcastcg',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 let studio,output,service,quitting=false,logPath,outputReady=false,lastOutputAck=null,outputUnconfirmed=false,powerBlock;
 let currentToken=null,psdSessions,aeSessions,localService,remote=null,managed=null,maintenance=false;
-let broadcastOutput,outputMode='desktop',obs=null,obsBusy=false;
+let broadcastOutput,ndiOutput,outputMode='desktop',obs=null,obsBusy=false,outputChanging=false;
+const activeOutput=()=>outputMode==='ndi'?ndiOutput:broadcastOutput;
 const profiles=()=>managed?.profiles||localService.settings.get('serverProfiles',[]);
 let rememberFile=join(dataDirectory,'remembered-login.bin');
 const hostDirectory=join(app.getPath('userData'),'production-server');
@@ -60,10 +63,10 @@ async function handleRequest(request,outputRead=false){
   if(!rel||rel.startsWith('..')||isAbsolute(rel))return new Response('Forbidden',{status:403});
   try{const bytes=await fs.promises.readFile(target);return new Response(request.method==='HEAD'?null:bytes,{headers:{'Content-Type':mime[extname(target)]||'application/octet-stream','Content-Security-Policy':csp,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store'}});}catch{return new Response('Not found',{status:404});}
 }
-function beforePublish(){if(outputMode==='browser'){if(!broadcastOutput?.info().status.ready)throw new ServiceError('Browser output is offline. Start it and load its URL in OBS before TAKE.',503);return;}if(!output||output.isDestroyed()||!outputReady)throw new ServiceError('Desktop output is offline. Open the output window before TAKE.',503);}
+function beforePublish(){if(outputChanging)throw new ServiceError('Output configuration is changing.',503);if(outputMode==='ndi'){if(!ndiOutput?.info().ready)throw new ServiceError('NDI output is offline. Start it before TAKE.',503);return;}if(outputMode==='browser'){if(!broadcastOutput?.info().status.ready)throw new ServiceError('Browser output is offline. Start it and load its URL in OBS before TAKE.',503);return;}if(!output||output.isDestroyed()||!outputReady)throw new ServiceError('Desktop output is offline. Open the output window before TAKE.',503);}
 function confirmProgram(program){
   outputUnconfirmed=true;
-  if(outputMode==='browser'){if(outputReady)output.webContents.send('broadcastcg:program',program);return broadcastOutput.publish(program).then(()=>{outputUnconfirmed=false;lastOutputAck=program.revision;}).catch(e=>{throw new ServiceError(e.message,504);});}
+  if(outputMode==='browser'||outputMode==='ndi'){if(outputReady)output.webContents.send('broadcastcg:program',program);return activeOutput().publish(program).then(()=>{outputUnconfirmed=false;lastOutputAck=program.revision;}).catch(e=>{throw new ServiceError(e.message,504);});}
   return new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>{pending.delete(program.revision);log('OUTPUT_ACK_TIMEOUT','failed');reject(new ServiceError('Output acknowledgement timed out. Output state is unconfirmed; inspect the output before issuing another command.',504));},3000);
     pending.set(program.revision,{resolve:()=>{clearTimeout(timer);outputUnconfirmed=false;lastOutputAck=program.revision;resolve();},reject});
@@ -97,8 +100,8 @@ function openOutput(displayId){
   output.webContents.once('did-finish-load',()=>{outputReady=true;log('OUTPUT_OPEN');});
   output.on('closed',()=>{if(outputMode==='desktop')remote?.releaseOutput();output=null;outputReady=false;if(outputMode==='desktop')outputUnconfirmed=true;log('OUTPUT_CLOSED');});
 }
-function status(){return{...(remote?remote.status():{local:true,database:service?.health()?'available':'offline',output:(outputMode==='browser'?broadcastOutput?.info().status.ready:outputReady)?'connected':'offline',outputUnconfirmed,lastOutputAck,authentication:'local-accounts',network:'local-only'}),outputMode,browserOutput:broadcastOutput?{...broadcastOutput.info(),url:undefined}:null};}
-async function receivedRemoteProgram(program){if(outputReady)output.webContents.send('broadcastcg:program',program);if(outputMode==='browser'){try{await broadcastOutput.publish(program);remote?.acknowledge(program.revision);}catch{outputUnconfirmed=true;log('BROWSER_OUTPUT_UNCONFIRMED','failed');}}}
+function status(){return{...(remote?remote.status():{local:true,database:service?.health()?'available':'offline',output:(outputMode==='ndi'?ndiOutput?.info().ready:outputMode==='browser'?broadcastOutput?.info().status.ready:outputReady)?'connected':'offline',outputUnconfirmed,lastOutputAck,authentication:'local-accounts',network:'local-only'}),outputMode,browserOutput:broadcastOutput?{...broadcastOutput.info(),url:undefined}:null};}
+async function receivedRemoteProgram(program){if(outputReady)output.webContents.send('broadcastcg:program',program);if(outputMode==='browser'||outputMode==='ndi'){try{await activeOutput().publish(program);remote?.acknowledge(program.revision);}catch{outputUnconfirmed=true;log('BROWSER_OUTPUT_UNCONFIRMED','failed');}}}
 function activateProfile(id){
  if(managed&&!managed.profiles.some(p=>p.id===id))throw Error('This installation requires an assigned production server.');
  remote?.close();remote=null;currentToken=null;service=localService;
@@ -121,12 +124,24 @@ function ipc(name,fn){ipcMain.handle('broadcastcg:'+name,async(event,...args)=>{
 function createWorkstation(){return createLocalService({directory:dataDirectory,encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable.',503);return safeStorage.encryptString(value);},decrypt:bytes=>safeStorage.decryptString(bytes),beforePublish,confirmProgram,event:log,workstation:()=>service?.settings.get('preferences',{})?.workstation||os.hostname()});}
 function registerIpc(){
  ipc('broadcastOutput',async(action,data={})=>{
-  authorize(action==='status'?'outputs.view':'outputs.configure');
-  const result=()=>({mode:outputMode,...broadcastOutput.info(),obsConnected:!!obs?.connected()});
-  if(action==='status'){const r=result();try{authorize('outputs.configure');}catch{r.url=null;}return r;}
-  if(action==='start'){if(pending.size)throw Error('Wait for the current output command.');if(remote?.status().engineAttached)throw Error('Release this workstation output attachment before changing engines.');const value=outputConfig(data);await broadcastOutput.start(value);outputMode='browser';outputUnconfirmed=true;log('BROWSER_OUTPUT_STARTED');return result();}
-  if(action==='stop'||action==='desktop'){remote?.releaseOutput();await broadcastOutput.stop();outputMode=action==='desktop'?'desktop':'browser';outputUnconfirmed=true;log('BROWSER_OUTPUT_STOPPED');return result();}
-  if(action==='copyUrl'){const url=broadcastOutput.info().url;if(!url)throw Error('Start browser output first.');require('electron').clipboard.writeText(url);return true;}
+  authorize(['status','ndiWebsite'].includes(action)?'outputs.view':'outputs.configure');
+  const result=()=>({mode:outputMode,...broadcastOutput.info(),url:outputMode==='ndi'?null:broadcastOutput.info().url,ndi:{...ndiOutput.info(),available:detectNdi().available},obsConnected:!!obs?.connected()});
+  if(action==='status'){const r=result();try{authorize('outputs.configure');}catch{r.url=null;}if(outputMode==='ndi')r.url=null;return r;}
+  if(['start','ndiStart','stop','desktop'].includes(action)){
+   if(outputChanging)throw Error('Output configuration is changing.');if(pending.size||ndiOutput.info().publishing)throw Error('Wait for the current output command.');
+   if((action==='start'||action==='ndiStart')&&remote?.status().engineAttached)throw Error('Release this workstation output attachment before changing engines.');
+   if((action==='start'||action==='ndiStart')&&(broadcastOutput.info().running||ndiOutput.info().running))throw Error('Stop the current output before changing engines.');
+   const authority=service,token=currentToken;outputChanging=true;
+   try{
+    if(action==='start'||action==='ndiStart'){
+     const value=outputConfig(data);if(action==='ndiStart'){await ndiOutput.start(ndiConfig({...value,source:data.source}));outputMode='ndi';}else{await broadcastOutput.start(value);outputMode='browser';}
+     try{sameSession(authority,token,'outputs.configure');}catch(e){await ndiOutput.stop();throw e;}
+    }else{remote?.releaseOutput();await ndiOutput.stop();if(action==='desktop')outputMode='desktop';}
+    outputUnconfirmed=true;log('OUTPUT_'+action.toUpperCase());return result();
+   }finally{outputChanging=false;}
+  }
+  if(action==='ndiWebsite'){await require('electron').shell.openExternal('https://ndi.video/');return true;}
+  if(action==='copyUrl'){if(outputMode==='ndi')throw Error('The NDI renderer is private. Select the named NDI source in your receiver.');const url=broadcastOutput.info().url;if(!url)throw Error('Start browser output first.');require('electron').clipboard.writeText(url);return true;}
   if(action==='obsConnect'){if(obsBusy)throw Error('OBS connection is busy.');obsBusy=true;try{obs?.close();obs=null;const authority=service,token=currentToken,client=await connectObs(data);try{sameSession(authority,token,'outputs.configure');obs=client;return await obs.inspect();}catch(e){client.close();obs=null;throw e;}}finally{obsBusy=false;}}
   if(action==='obsStatus'){if(!obs)throw Error('Connect to OBS first.');return obs.inspect();}
   if(action==='obsDisconnect'){obs?.close();obs=null;return true;}
@@ -276,6 +291,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     recoverInterruptedRestore(dataDirectory);service=createWorkstation();
     localService=service;if(!managed&&localService.settings.get('hostStartup',false)){try{await startHost();}catch{log('PRODUCTION_HOST_START_FAILED','failed');}}activateProfile(managed?(managed.profiles.find(p=>p.id===localService.settings.get('activeServer'))||managed.profiles[0]).id:localService.settings.get('activeServer'));
     broadcastOutput=createOutputController({directory:dataDirectory,appDirectory:__dirname,executable:process.execPath,settings:{get:(...a)=>localService.settings.get(...a),set:(...a)=>localService.settings.set(...a)},protect:value=>{if(!safeStorage.isEncryptionAvailable())throw Error('Windows credential protection is unavailable.');return safeStorage.encryptString(value);},unprotect:bytes=>safeStorage.decryptString(bytes),readProgram:async()=>{const r=await service.handle(new Request('broadcastcg://app/api/program'),service.outputContext);if(!r.ok)throw Error('Program unavailable');return r.json();},readAsset:path=>service.handle(new Request('broadcastcg://app'+path),service.outputContext)});
+    ndiOutput=createNdiController({bridge:broadcastOutput,helper:app.isPackaged?join(process.resourcesPath,'output-tools','BroadcastCGNdi.exe'):join(__dirname,'assets','BroadcastCGNdi.exe')});
     psdSessions=createPsdSessions({workerPath:join(__dirname,'app','psd-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importPsd(draft,options,token)});
     aeSessions=createAeSessions({workerPath:join(__dirname,'app','ae-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importAe(draft,options,token)});
     if(fs.existsSync(rememberFile)){try{acceptSession(await service.auth.resume(safeStorage.decryptString(fs.readFileSync(rememberFile))));}catch(error){if(error.status!==503)clearRemember();log('REMEMBERED_LOGIN_UNAVAILABLE');}}
@@ -306,5 +322,5 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   }).catch(error=>{log('STARTUP_FAILED','failed');dialog.showErrorBox('BroadcastCG could not start',error.message);app.exit(1);});
 }
 app.on('before-quit',()=>{quitting=true;});
-app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{broadcastOutput?.dispose();obs?.close();psdSessions?.clear();aeSessions?.clear();if(!remote)localService?.auth.endSession(currentToken);remote?.close();localService?.close();}catch{};});
+app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{ndiOutput?.dispose();broadcastOutput?.dispose();obs?.close();psdSessions?.clear();aeSessions?.clear();if(!remote)localService?.auth.endSession(currentToken);remote?.close();localService?.close();}catch{};});
 app.on('window-all-closed',()=>app.quit());

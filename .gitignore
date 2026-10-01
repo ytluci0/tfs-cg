@@ -52,3 +52,5 @@ next-env.d.ts
 /desktop/release/
 /desktop/.cache/
 /.cache/
+
+/desktop/assets/BroadcastCGNdi.exe

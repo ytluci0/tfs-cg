@@ -22,7 +22,10 @@
     "package.json",
     "assets/Install-ManagedClient.ps1",
     "editor-state.cjs",
-    "output-controller.cjs"
+    "output-controller.cjs",
+    "ndi-controller.cjs",
+    "ndi-config.cjs",
+    "assets/NDI-NOTICES.txt"
   ],
   "asar": true,
   "extraResources": [
@@ -37,6 +40,10 @@
     {
       "from": "assets/Install-ManagedClient.ps1",
       "to": "server-tools/Install-ManagedClient.ps1"
+    },
+    {
+      "from": "assets/BroadcastCGNdi.exe",
+      "to": "output-tools/BroadcastCGNdi.exe"
     }
   ],
   "npmRebuild": false,
