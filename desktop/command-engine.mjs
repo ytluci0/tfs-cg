@@ -22,16 +22,18 @@ export function createCommandEngine({db,authenticate,requirePermission,requireWo
  function assertOutputFree(commandId){const active=[...running.values()].find(r=>r.job.usesOutput&&r.job.id!==commandId);if(active)throw new ServiceError('Output is reserved by '+active.job.username+' for '+active.job.label+'.',409);}
  function actorFor(run){if(run.abort.signal.aborted)throw new ServiceError('Sequence cancelled. Completed actions remain applied.',409);const actor=authenticate(run.token);requireWorkspace(actor,run.job.projectId);requirePermission(actor,'panels.operate');assertControl(actor,run.job.projectId);return actor;}
  async function wait(ms,run){const end=performance.now()+ms;run.job.waitUntil=now()+ms;run.job.status='waiting';save(run.job);while(performance.now()<end){actorFor(run);await new Promise(resolve=>{const finish=()=>{clearTimeout(timer);run.abort.signal.removeEventListener('abort',finish);resolve();};const timer=setTimeout(finish,Math.max(1,Math.min(200,end-performance.now())));run.abort.signal.addEventListener('abort',finish,{once:true});});}actorFor(run);delete run.job.waitUntil;run.job.status='running';}
- async function work(run){const job=run.job,branches=new Map();try{
-  for(let i=0;i<run.plan.length;i++){if(closed)return;const actor=actorFor(run),entry=run.plan[i],step=job.steps[i];job.currentStep=i;const project=readProject(actor,job.projectId).project;
+ async function work(run){const job=run.job,branches=new Map();let recoveryEnd=-1,recoveryError='';try{
+  for(let i=0;i<run.plan.length;i++){if(closed)return;if(i===recoveryEnd)break;const actor=actorFor(run),entry=run.plan[i],step=job.steps[i];job.currentStep=i;const project=readProject(actor,job.projectId).project;
    if(entry.guards?.some(g=>branches.get(g.index)!==g.value)||entry.action.type!=='branch'&&!conditionMatches(entry.action,project.variables)){for(let j=i;j<entry.end;j++)job.steps[j]={...job.steps[j],status:'skipped',finishedAt:now()};i=entry.end-1;save(job);continue;}
    step.status='running';step.startedAt=now();save(job);
-   if(entry.action.type==='branch')branches.set(i,conditionMatches(entry.action,project.variables));
+   try{if(entry.action.type==='branch')branches.set(i,conditionMatches(entry.action,project.variables));
    else if(entry.action.type==='delay'){const ms=Number(textValue(entry.action.value,project.variables));if(!Number.isFinite(ms)||ms<0||ms>10000)throw new ServiceError('Wait must be between 0 and 10000 milliseconds.');await wait(ms,run);}
    else if(entry.action.type!=='macro')await execute(entry.action,{actor,token:run.token,projectId:job.projectId,commandId:job.id,signal:run.abort.signal,stage:run.stage,setStage:value=>{run.stage=value;job.staged=value;},output:run.output});
-   if(closed)return;step.status='succeeded';step.finishedAt=now();job.completedSteps=job.steps.filter(s=>s.status==='succeeded').length;save(job);
+   if(closed)return;step.status='succeeded';if(entry.recovery)branches.set(i,true);
+   }catch(e){if(!entry.recovery||recoveryEnd>=0||e?.unconfirmed||run.abort.signal.aborted||!(e instanceof ServiceError)||[401,403,409].includes(e.status))throw e;actorFor(run);branches.set(i,false);recoveryEnd=entry.recovery.end;recoveryError=e.message;step.status='failed';step.message=e.message;job.error='Action failed; configured fallback was run. '+e.message;}
+   step.finishedAt=now();job.completedSteps=job.steps.filter(s=>s.status==='succeeded').length;save(job);
   }
-  job.status=run.abort.signal.aborted?'cancelled':'succeeded';
+  if(recoveryEnd>=0){for(const step of job.steps)if(step.status==='pending'){step.status='skipped';step.finishedAt=now();}job.status='failed';job.error='Action failed; fallback completed and the sequence stopped. '+recoveryError;}else job.status=run.abort.signal.aborted?'cancelled':'succeeded';
  }catch(e){if(closed)return;job.status=e?.unconfirmed?'unconfirmed':run.abort.signal.aborted?'cancelled':'failed';job.error=e instanceof ServiceError?e.message:'The step could not finish. Review its configuration and connection before running again.';const step=job.steps[job.currentStep];if(step?.status==='running'){step.status=e?.unconfirmed?'unconfirmed':run.abort.signal.aborted?'cancelled':'failed';step.message=job.error;step.finishedAt=now();}}
  finally{if(!closed){delete job.waitUntil;job.finishedAt=now();save(job);running.delete(job.id);record('COMMAND_'+job.status.toUpperCase(),job.id,job.status,run.actor,{projectId:job.projectId,detail:job.label});}}
  }

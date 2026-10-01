@@ -63,7 +63,7 @@ export async function createNetworkServer({directory,tls,secretKey,bootstrapSecr
   const answer=async response=>{res.writeHead(response.status,{'Content-Type':response.headers.get('Content-Type')||'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(Buffer.from(await response.arrayBuffer()));};
   try{
    if(req.headers.origin&&req.headers.origin!=='broadcastcg://app')throw new ServiceError('Use the installed BroadcastCG client.',403);
-   const path=new URL(req.url,'https://server').pathname,large=path.startsWith('/network/import')||['/network/inspect','/network/export'].includes(path),limit=large?110000000:path==='/api/assets'?10000000:2000000;
+   const path=new URL(req.url,'https://server').pathname,large=path.startsWith('/network/import')||['/network/inspect','/network/export'].includes(path),limit=large?110000000:path==='/api/assets'?50000000:2000000;
    if(Number(req.headers['content-length']||0)>limit)throw new ServiceError('Request too large.',413);
    let size=0;const chunks=[];for await(const chunk of req){size+=chunk.length;if(size>limit)throw new ServiceError('Request too large.',413);chunks.push(chunk);}
    const body=Buffer.concat(chunks),request=new Request('https://server'+req.url,{method:req.method,headers:req.headers,...(body.length?{body}:{} )});

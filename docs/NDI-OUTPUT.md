@@ -120,3 +120,8 @@ Implementation references: [NDI sender API](https://docs.ndi.video/all/developin
 [Electron offscreen rendering](https://www.electronjs.org/docs/latest/tutorial/offscreen-rendering).
 NDI is a registered trademark of Vizrt NDI AB. Interface notices are included in
 `desktop/assets/NDI-NOTICES.txt`.
+# 0.13.0 installed production-tools qualification
+
+The installed 0.13.0 build was tested at 1920 × 1080, 60 fps on 2026-10-01. The generated scene contained 42 stored layers / 48 expanded layers, including repeated data rows, effects, a local looping WebM, ticker and countdown. The 60-second independent receiver probe measured 59.93 active fps and zero receiver queue drops. Hide, reconnect, transparent restart, stopped-output rejection and native-sender failure checks passed.
+
+Renderer telemetry recorded six late intervals (maximum 116.6 ms). Sender repeated-frame counts include startup, Hide and receiver reconnection. This is a measured workload on the local RTX 3070 Ti workstation, not a guarantee for every project or a physical multi-PC/mixer qualification. The release artifact is `desktop/release/ndi-qualification-1080p60-production.json`.

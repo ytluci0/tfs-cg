@@ -300,7 +300,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     outputSession.protocol.handle('broadcastcg',request=>handleRequest(request,true));
     outputSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));outputSession.setPermissionCheckHandler(()=>false);
     outputSession.webRequest.onBeforeRequest({urls:['*://*/*','file://*/*']},(details,callback)=>callback({cancel:!(details.resourceType==='image'&&details.url.startsWith('https://'))}));
-    const localFonts=(wc,permission,url)=>{if(permission!=='local-fonts'||wc!==studio?.webContents||!trusted({url}))return false;try{authorize('graphics.create');return true;}catch{return false;}};
+    const localFonts=(wc,permission,url)=>{if(!['local-fonts','midi'].includes(permission)||wc!==studio?.webContents||!trusted({url}))return false;try{authorize(permission==='midi'?'panels.operate':'graphics.create');return true;}catch{return false;}};
     session.defaultSession.setPermissionRequestHandler((wc,permission,callback,details)=>callback(localFonts(wc,permission,details.requestingUrl)));
     session.defaultSession.setPermissionCheckHandler((wc,permission,origin)=>localFonts(wc,permission,origin));
     session.defaultSession.on('will-download',(event,item,contents)=>{

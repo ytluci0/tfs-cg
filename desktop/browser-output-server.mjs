@@ -32,7 +32,8 @@ export async function createBrowserOutput({root,config,secret,onEvent=()=>{},ack
   if(name.startsWith('media/')){const asset=assets.get(name.slice(6));if(!asset)return fail(404);bytes=asset.bytes;type=asset.type;}
   else{bytes=files.get(name);type=name.endsWith('.html')?'text/html':name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'font/woff2';}
   if(!bytes)return fail(404);
-  res.writeHead(200,{'Content-Type':type,'Cache-Control':'no-store','Content-Length':bytes.length,'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"});
+  if(type?.startsWith('video/')&&req.headers.range){const m=/^bytes=(\d+)-(\d*)$/.exec(req.headers.range);const start=m?Number(m[1]):-1,end=m?Math.min(bytes.length-1,m[2]?Number(m[2]):bytes.length-1):-1;if(start<0||start>end||start>=bytes.length){res.writeHead(416,{'Content-Range':'bytes */'+bytes.length});res.end();return;}res.writeHead(206,{'Content-Type':type,'Accept-Ranges':'bytes','Content-Range':`bytes ${start}-${end}/${bytes.length}`,'Content-Length':end-start+1,'Cache-Control':'no-store'});res.end(req.method==='HEAD'?undefined:bytes.subarray(start,end+1));return;}
+  res.writeHead(200,{'Accept-Ranges':'bytes','Content-Type':type,'Cache-Control':'no-store','Content-Length':bytes.length,'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Content-Security-Policy':"default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; media-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"});
   res.end(req.method==='HEAD'?undefined:bytes);
  });
  server.headersTimeout=5000;server.requestTimeout=5000;server.maxConnections=32;
@@ -67,7 +68,7 @@ export async function createBrowserOutput({root,config,secret,onEvent=()=>{},ack
   async publish(next,media=[]){
    if(!status().ready)throw Error('Browser receiver is offline or stale.');if(waiter)throw Error('Another browser output command is pending.');
    if(!next||typeof next.revision!=='string'||JSON.stringify(next).length>8000000)throw Error('Invalid output snapshot.');
-   let total=0;const fresh=new Map();for(const asset of media){if(!/^[a-zA-Z0-9-]{1,120}$/.test(asset.id)||!['image/png','image/jpeg','image/webp'].includes(asset.type))throw Error('Invalid output image.');const bytes=Buffer.from(asset.bytes);total+=bytes.length;if(total>128000000)throw Error('Output images exceed 128 MB.');fresh.set(asset.id,{bytes,type:asset.type});}
+   let total=0;const fresh=new Map();for(const asset of media){if(!/^[a-zA-Z0-9-]{1,120}$/.test(asset.id)||!['image/png','image/jpeg','image/webp','video/mp4','video/webm'].includes(asset.type))throw Error('Invalid output image.');const bytes=Buffer.from(asset.bytes);total+=bytes.length;if(total>128000000)throw Error('Output images exceed 128 MB.');fresh.set(asset.id,{bytes,type:asset.type});}
    assets=fresh;program=next;sequence++;
    return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{if(waiter?.revision===next.revision){metrics.error='Receiver acknowledgement timed out. Output is unconfirmed.';rejectPending(metrics.error);emit();}},ackTimeout);waiter={revision:next.revision,peer:active,start:performance.now(),timer,resolve,reject};send(active.ws,snapshot());});
   },

@@ -3,7 +3,7 @@ import {createOutputController} from './output-controller.cjs';
 import {createNdiController} from './ndi-controller.cjs';
 import {detectNdi} from './ndi-config.cjs';
 import {defaultProject,layer} from '../lib/studio-model.ts';
-import {mkdirSync,writeFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {spawn,execFileSync} from 'node:child_process';
 import {createInterface} from 'node:readline';
@@ -20,11 +20,13 @@ const nativeRequire=createRequire(join(desktop,'package.json')),outputFactory=in
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 await app.whenReady();
 let nativeWorker,program=null,receiver,report={ok:false,checks:[],width,height,fps,seconds,installation:installation||null,version:installation?nativeRequire(join(appDirectory,'package.json')).version:null,time:new Date().toISOString()},probeLines=[];
-const bridge=outputFactory({directory,appDirectory,executable,readProgram:async()=>program,readAsset:async()=>new Response('',{status:404}),settings:{get:()=>null,set:()=>{}},protect:x=>Buffer.from(x),unprotect:x=>x.toString()});
+const production=process.argv[7]==='production',mediaBytes=production?readFileSync(join(cache,'production-loop.webm')):null;report.production=production;
+const bridge=outputFactory({directory,appDirectory,executable,readProgram:async()=>program,readAsset:async path=>production&&path==='/api/assets/qa-video'?new Response(mediaBytes,{headers:{'Content-Type':'video/webm'}}):new Response('',{status:404}),settings:{get:()=>null,set:()=>{}},protect:x=>Buffer.from(x),unprotect:x=>x.toString()});
 const ndi=ndiFactory({bridge,helper,spawnWorker:(...args)=>{nativeWorker=spawn(...args);return nativeWorker;}});
 const scene=defaultProject().scenes[0];scene.layers=[layer('rect',{x:760,y:340,width:400,height:400,color:'#e02040',opacity:.5})];scene.duration=Math.max(20,seconds+10);
 for(let i=0;i<32;i++)scene.layers.push(layer('rect',{x:100+i*12,y:30+i*8,width:80,height:6,color:i%2?'#00d4c8':'#f6bd3e',keys:{x:Array.from({length:Math.ceil(scene.duration/2)+1},(_,n)=>({time:Math.min(scene.duration,n*2),value:n%2?1300-i*12:100+i*12,ease:'linear'}))}}));
-const creative=process.argv[7]==='creative';if(creative){report.creative=true;for(let i=0;i<32;i++)if(i%4===0)scene.layers[i+1].visual={fill:'linear',gradientColor:'#3355ee',glow:2,strokeWidth:1,stroke:'#ffffff'};scene.layers.push(layer('rect',{x:1500,y:30,width:300,height:180,color:'#236bab',shadow:true,radius:20,visual:{fill:'radial',gradientColor:'#142639',shadowBlur:8}}),layer('text',{x:1400,y:250,width:380,height:90,text:'LIVE SPORTS BROADCAST',fontSize:70,visual:{autoFit:true}}),layer('arrow',{x:1500,y:860,width:230,height:80,color:'#eea020'}),layer('path',{x:30,y:820,width:150,height:150,visual:{fill:'linear',gradientColor:'#22aaff',points:[{x:0,y:1},{x:.5,y:0},{x:1,y:1}]}}));report.layers=scene.layers.length;}
+const creative=process.argv[7]==='creative'||production;if(creative){report.creative=true;for(let i=0;i<32;i++)if(i%4===0)scene.layers[i+1].visual={fill:'linear',gradientColor:'#3355ee',glow:2,strokeWidth:1,stroke:'#ffffff'};scene.layers.push(layer('rect',{x:1500,y:30,width:300,height:180,color:'#236bab',shadow:true,radius:20,visual:{fill:'radial',gradientColor:'#142639',shadowBlur:8}}),layer('text',{x:1400,y:250,width:380,height:90,text:'LIVE SPORTS BROADCAST',fontSize:70,visual:{autoFit:true}}),layer('arrow',{x:1500,y:860,width:230,height:80,color:'#eea020'}),layer('path',{x:30,y:820,width:150,height:150,visual:{fill:'linear',gradientColor:'#22aaff',points:[{x:0,y:1},{x:.5,y:0},{x:1,y:1}]}}));report.layers=scene.layers.length;}
+if(production){scene.groups=[{id:'qa-rows',name:'Data rows',opacity:1,visible:true,repeat:{sourceId:'',rowsPath:'rows',fields:{name:'name'},rows:[{name:'HOME'},{name:'AWAY'},{name:'THIRD'},{name:'FOURTH'}],direction:'vertical',gapX:0,gapY:44,columns:1,limit:4}}];scene.layers.push(layer('rect',{groupId:'qa-rows',x:1300,y:390,width:450,height:36,color:'#163347'}),layer('text',{groupId:'qa-rows',x:1310,y:395,width:430,height:28,fontSize:24,text:'{{row.rank}}. {{row.name}}'}),layer('video',{x:1430,y:630,width:300,height:169,src:'/api/assets/qa-video',media:{start:0,speed:1,loop:true}}),layer('ticker',{x:100,y:970,width:1200,height:55,fontSize:32,text:'LIVE SPORTS AND ESPORTS BROADCAST',ticker:{speed:100,gap:100}}),layer('countdown',{x:45,y:450,width:200,height:70,fontSize:50,text:'120'}));report.layers=scene.layers.length;report.expandedLayers=scene.layers.length+6;}
 function value(mode='show'){return{revision:randomUUID(),projectId:'ndi-qualification',scene,variables:{},mode,startedAt:Date.now()};}
 async function take(mode){program=value(mode);await ndi.publish(program);return program;}
 function receive(duration){probeLines=[];receiver=spawn(join(cache,'NdiProbe.exe'),[detectNdi().path,ndi.info().source,String(duration)],{windowsHide:true,stdio:['ignore','pipe','pipe']});createInterface({input:receiver.stdout}).on('line',line=>{try{probeLines.push(JSON.parse(line));}catch{}});return new Promise((resolve,reject)=>{receiver.once('error',reject);receiver.once('exit',code=>code===0?resolve(probeLines):reject(Error('NDI probe failed: '+JSON.stringify(probeLines))));});}
@@ -42,7 +44,7 @@ try{
  await ndi.start({source:'BroadcastCG QA restart',width,height,fps,port:17824,background:'transparent'});const restarted=receive(10);await restarted;assert.ok(probeLines.filter(x=>x.type==='frame').every(x=>x.center[3]===0));report.checks.push('Manual restart starts transparent and does not replay the previous program');
  nativeWorker.kill();await waitFor(()=>!ndi.info().ready);await assert.rejects(()=>ndi.publish(value()),/sender stopped|not ready|pipe disconnected/);report.checks.push('Native sender failure marks output unavailable and rejects TAKE without retry');
  report.ok=true;
-}catch(e){report.error=e.stack;console.error(e);}finally{receiver?.kill();await ndi.stop();bridge.dispose();writeFileSync(join(cache,'phase11-ndi-'+width+(fps===50?'':'-'+fps)+(creative?'-creative':'')+'.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));app.exit(report.ok?0:1);}
+}catch(e){report.error=e.stack;console.error(e);}finally{receiver?.kill();await ndi.stop();bridge.dispose();writeFileSync(join(cache,'phase11-ndi-'+width+(fps===50?'':'-'+fps)+(production?'-production':creative?'-creative':'')+'.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));app.exit(report.ok?0:1);}
 
 }
 main().catch(e=>{console.error(e);app.exit(1);});

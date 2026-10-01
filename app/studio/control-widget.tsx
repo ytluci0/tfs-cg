@@ -1,4 +1,5 @@
 'use client';
+import {CustomWidget} from './custom-widget';
 import {ActionButton,DataSelector,Indicator} from './advanced-controls';
 import {controlAvailable} from '@/lib/creative-tools';
 import {useEffect,useRef,useState} from 'react';
@@ -21,6 +22,7 @@ export function ControlWidget({control:c,project,interactive,busy,setVar,run,onE
  function after(){if(c.actions.length)run(c).catch(onError);}
  function update(v:string|number|boolean){if(!connected){onError(Error('Choose or create a shared variable in the inspector.'));return;}if(c.kind==='counter'&&clocks.desktop){void clocks.counter(c.variable,undefined,Number(v),c).then(ok=>{if(ok)after();});return;}setVar(c.variable,v);after();}
  function adjust(delta:number){if(clocks.desktop){void clocks.counter(c.variable,delta,undefined,c).then(ok=>{if(ok)after();});return;}try{update(counterValue(c,project.variables,delta));}catch(e){onError(e);}}
+ if(c.kind==='widget')return <CustomWidget control={c} project={project} disabled={disabled||!connected} run={run} onError={onError}/>;
  if(c.kind==='button')return <ActionButton control={c} project={project} disabled={disabled} run={run} onError={onError}/>;
  if(c.kind==='roster'||c.optionSource&&['select','segmented'].includes(c.kind))return <DataSelector control={c} project={project} disabled={disabled||!connected} run={run} onError={onError}/>;
  if(['progress','status'].includes(c.kind))return <Indicator control={c} project={project}/>;

@@ -8,13 +8,14 @@ export const appearanceSchema=z.object({
  icon:z.string().max(16).optional(),image:z.string().max(2000).optional(),label:z.string().max(100).optional(),
 });
 export const visualSchema=z.object({
+ blend:z.enum(['normal','multiply','screen','overlay','darken','lighten','difference','exclusion']).optional(),clipLayer:z.string().max(100).optional(),gradientStops:z.array(z.object({offset:z.number().min(0).max(1),color:z.string().max(100)})).min(2).max(12).optional(),
  fill:z.enum(['solid','linear','radial','none']).optional(),gradientColor:z.string().max(100).optional(),gradientAngle:z.number().min(-360).max(360).optional(),
  stroke:z.string().max(100).optional(),strokeWidth:z.number().min(0).max(100).optional(),
  shadowColor:z.string().max(100).optional(),shadowX:z.number().min(-200).max(200).optional(),shadowY:z.number().min(-200).max(200).optional(),shadowBlur:z.number().min(0).max(100).optional(),
  glowColor:z.string().max(100).optional(),glow:z.number().min(0).max(100).optional(),blur:z.number().min(0).max(50).optional(),
  imageFit:z.enum(['cover','contain','stretch']).optional(),cropX:z.number().min(0).max(100).optional(),cropY:z.number().min(0).max(100).optional(),cropZoom:z.number().min(1).max(10).optional(),mask:z.enum(['none','rounded','ellipse']).optional(),
  autoFit:z.boolean().optional(),letterSpacing:z.number().min(-20).max(100).optional(),lineHeight:z.number().min(.5).max(3).optional(),
- points:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)})).min(2).max(100).optional(),closed:z.boolean().optional(),
+ points:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1),inX:z.number().min(-2).max(3).optional(),inY:z.number().min(-2).max(3).optional(),outX:z.number().min(-2).max(3).optional(),outY:z.number().min(-2).max(3).optional()})).min(2).max(100).optional(),closed:z.boolean().optional(),
 });
 export const cueSchema=z.object({id:z.string().min(1).max(100),name:z.string().trim().min(1).max(100),start:z.number().min(0).max(600),end:z.number().min(0).max(600),loop:z.boolean(),finish:z.enum(['hold','hide'])});
 export const optionSchema=z.object({value:z.string().max(500),label:z.string().max(500),photo:z.string().max(2000).optional(),fields:z.record(z.string().max(100),z.union([z.string().max(2000),z.number().finite(),z.boolean()])).optional()});

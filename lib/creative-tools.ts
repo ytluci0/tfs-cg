@@ -7,7 +7,7 @@ export function controlCondition(when:Control['enabledWhen'],variables:Project['
 export function controlAvailable(c:Control,variables:Project['variables']):boolean{return !c.hidden&&controlCondition(c.visibleWhen,variables)&&controlCondition(c.enabledWhen,variables);}
 export function controlActions(c:Control,event:ControlEvent='click'){return event==='click'?c.actions:c.events?.[event]||[];}
 export function selectorOptions(c:Control,p:Project){
- if(c.kind==='roster')return p.players.filter(v=>!c.rosterTeam||c.rosterTeam==='all'||v.team===c.rosterTeam).map(v=>({value:v.id,label:'#'+v.number+' · '+v.name,photo:v.photo,fields:{name:v.name,number:v.number,photo:v.photo,position:v.position,team:v.team}}));
+ if(c.kind==='roster'||c.kind==='widget'&&c.rosterTeam&&!c.optionSource)return p.players.filter(v=>!c.rosterTeam||c.rosterTeam==='all'||v.team===c.rosterTeam).map(v=>({value:v.id,label:'#'+v.number+' · '+v.name,photo:v.photo,fields:{name:v.name,number:v.number,photo:v.photo,position:v.position,team:v.team}}));
  if(c.optionSource)return p.optionLists?.[c.id]||[];
  return [...new Set(c.options.split(/[\n,]/).map(v=>v.trim()).filter(Boolean))].map(v=>({value:v,label:v,photo:'',fields:{} as Record<string,string|number|boolean>}));
 }

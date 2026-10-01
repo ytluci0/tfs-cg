@@ -34,6 +34,11 @@ function imageMime(bytes){
   if(bytes.subarray(0,4).toString()==='RIFF'&&bytes.subarray(8,12).toString()==='WEBP')return 'image/webp';
   throw new ServiceError('Upload a PNG, JPEG or WebP image.');
 }
+function mediaMime(bytes){
+ if(bytes.length>=16&&bytes.subarray(4,8).toString()==='ftyp'&&['isom','iso2','mp41','mp42','avc1','M4V '].includes(bytes.subarray(8,12).toString()))return 'video/mp4';
+ if(bytes.length>=16&&bytes.subarray(0,4).equals(Buffer.from([0x1a,0x45,0xdf,0xa3]))&&bytes.subarray(0,4096).includes(Buffer.from('webm')))return 'video/webm';
+ return imageMime(bytes);
+}
 function assetIds(project){
   const text=JSON.stringify(project);return [...new Set([...text.matchAll(/\/api\/assets\/([a-zA-Z0-9-]+)/g)].map(m=>m[1]))];
 }
@@ -93,7 +98,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const commands=createCommandEngine({db,authenticate,requirePermission,requireWorkspace,readProject,record,now,assertControl,
     prepare(data,project,actor){
       let actions,label,output=null;
-      if(data.kind==='control'){const panel=project.panels.find(p=>p.id===data.panelId),control=panel?.controls.find(c=>c.id===data.controlId);if(!control)throw new ServiceError('Control no longer exists.',404);if(!controlAvailable(control,project.variables))throw new ServiceError('This control is hidden or disabled by its conditions.',403);const trigger=data.event||'click';if(!['click','press','release','hold'].includes(trigger))throw new ServiceError('Unknown control event.');actions=controlActions(control,trigger);if(data.selectionValue!==undefined){if(!['roster','select','segmented'].includes(control.kind)||typeof data.selectionValue!=='string')throw new ServiceError('Invalid selection.');try{selectOption(project,control,data.selectionValue);}catch(e){throw new ServiceError(e.message);}actions=[action('select-row',control.id,JSON.stringify({panelId:panel.id,value:data.selectionValue})),...actions];}label=control.label+' · '+trigger;}
+      if(data.kind==='control'){const panel=project.panels.find(p=>p.id===data.panelId),control=panel?.controls.find(c=>c.id===data.controlId);if(!control)throw new ServiceError('Control no longer exists.',404);if(!controlAvailable(control,project.variables))throw new ServiceError('This control is hidden or disabled by its conditions.',403);const trigger=data.event||'click';if(!['click','press','release','hold'].includes(trigger))throw new ServiceError('Unknown control event.');actions=controlActions(control,trigger);if(data.selectionValue!==undefined){if(!['roster','select','segmented','widget'].includes(control.kind)||typeof data.selectionValue!=='string')throw new ServiceError('Invalid selection.');try{selectOption(project,control,data.selectionValue);}catch(e){throw new ServiceError(e.message);}actions=[action('select-row',control.id,JSON.stringify({panelId:panel.id,value:data.selectionValue})),...actions];}label=control.label+' · '+trigger;}
       else if(data.kind==='macro'){const macro=project.macros?.find(m=>m.id===data.macroId);if(!macro)throw new ServiceError('Macro no longer exists.',404);actions=macro.actions;label=macro.name;}
       else if(data.kind==='clock'){actions=[action('clock',data.variable,JSON.stringify(data.clock))];label='Clock - '+data.variable;}
       else if(data.kind==='counter'){actions=[action('counter',data.variable,JSON.stringify({delta:data.delta,value:data.value,panelId:data.panelId,controlId:data.controlId}))];label='Counter - '+data.variable;}
@@ -193,7 +198,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     if(path==='/api/program'&&method==='GET'){if(actor)requirePermission(actor,'outputs.view');return json(!program||outputRead||canAccess(actor,program.projectId)?liveProgram():null);}
     if(path==='/api/program'&&method==='POST')return json(await publishCommand(await readJson(request),context));
     if(path==='/api/assets'&&method==='POST'){
-      requirePermission(actor,'graphics.edit');const bytes=await readBytes(request,10000000),mime=imageMime(bytes),id=randomUUID(),name=(request.headers.get('x-file-name')||'Image').slice(0,250);const current=actorFor(context);requirePermission(current,'graphics.edit');
+      requirePermission(actor,'graphics.edit');const bytes=await readBytes(request,50000000),mime=mediaMime(bytes),id=randomUUID(),name=(request.headers.get('x-file-name')||'Image').slice(0,250);if(!mime.startsWith('video/')&&bytes.length>10000000)throw new ServiceError('Images must be smaller than 10 MB.',413);const current=actorFor(context);requirePermission(current,'graphics.edit');
       db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,name,mime,bytes,current.user.id);
       return json({id,url:'/api/assets/'+id,mime,name});
     }
@@ -202,7 +207,8 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       if(outputRead?!program||!assetIds(program).includes(id):!canReadAsset(actor,id))throw new ServiceError('Image is not available to this account.',403);
       const row=db.prepare('SELECT mime,bytes FROM assets WHERE id=?').get(id);
       if(!row)throw new ServiceError('Image is missing from this workstation. Import its complete project package.',404);
-      return new Response(row.bytes,{headers:{'Content-Type':row.mime,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}});
+      const bytes=Buffer.from(row.bytes),headers={'Content-Type':row.mime,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Accept-Ranges':'bytes'};
+      const range=request.headers.get('range');if(range){const match=/^bytes=(\d+)-(\d*)$/.exec(range);if(!match)return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+bytes.length}});const start=Number(match[1]),end=Math.min(bytes.length-1,match[2]?Number(match[2]):bytes.length-1);if(start>end||start>=bytes.length)return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+bytes.length}});return new Response(bytes.subarray(start,end+1),{status:206,headers:{...headers,'Content-Range':`bytes ${start}-${end}/${bytes.length}`,'Content-Length':String(end-start+1)}});}return new Response(bytes,{headers:{...headers,'Content-Length':String(bytes.length)}});
     }
     if(path==='/api/sources'&&method==='POST'){
       const data=await readJson(request,16000);const current=actorFor(context);requirePermission(current,'integrations.configure');const project=readProject(current,data.projectId).project;if(!project.sources.some(s=>s.id===data.sourceId))throw new ServiceError('Save this data source in the workspace first.');
@@ -315,8 +321,8 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       if(!Array.isArray(assets)||assets.length>500)throw new ServiceError('Invalid asset manifest.');
       const ids=new Set();
       const checked=assets.map(a=>{
-        if(typeof a.id!=='string'||!/^[a-zA-Z0-9-]{1,100}$/.test(a.id)||ids.has(a.id)||typeof a.name!=='string'||a.name.length>250||typeof a.bytes!=='string'||a.bytes.length>14000000)throw new ServiceError('Invalid asset manifest.');
-        ids.add(a.id);const bytes=Buffer.from(a.bytes,'base64');if(bytes.length>10000000||imageMime(bytes)!==a.mime)throw new ServiceError('Invalid package image.');return{...a,bytes};
+        if(typeof a.id!=='string'||!/^[a-zA-Z0-9-]{1,100}$/.test(a.id)||ids.has(a.id)||typeof a.name!=='string'||a.name.length>250||typeof a.bytes!=='string'||a.bytes.length>67000000)throw new ServiceError('Invalid asset manifest.');
+        ids.add(a.id);const bytes=Buffer.from(a.bytes,'base64');if(bytes.length>(a.mime?.startsWith('video/')?50000000:10000000)||mediaMime(bytes)!==a.mime)throw new ServiceError('Invalid package image.');return{...a,bytes};
       });
       const missing=assetIds(project).filter(id=>!ids.has(id)&&!canReadAsset(actor,id));
       const external=[...new Set([...JSON.stringify(project).matchAll(/https?:\/\/[^"\s]+/g)].map(m=>m[0]))];

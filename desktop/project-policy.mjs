@@ -27,6 +27,7 @@ export function checkProjectChanges(actor,old,next,requirePermission){
  if(!actor.user.permissions.some(p=>['projects.create','projects.edit','graphics.create','graphics.edit','graphics.delete','panels.create','panels.edit','panels.delete','panels.operate','data.configure'].includes(p)))throw new ServiceError('This account has read-only access.',403);
  if(!old){check('projects.create');check('graphics.create');check('panels.create');if(next.sources.length||next.bindings.length)check('data.configure');return;}
  if(old.name!==next.name)check('projects.edit');
+ if(!same(old.graphicComponents,next.graphicComponents))check('graphics.edit');
  if(!same(old.optionLists,next.optionLists))check('data.fetch');
  if(!same(old.sources,next.sources)||!same(old.bindings,next.bindings))check('data.configure');
  if(!same(old.formations,next.formations)||!same(old.toolPresets,next.toolPresets)||!same(old.panelComponents,next.panelComponents)||!same(old.macros,next.macros))check('panels.edit');
@@ -40,7 +41,7 @@ export function checkProjectChanges(actor,old,next,requirePermission){
   for(const [id,value] of after){const previous=before.get(id);if(!previous||same(previous,value))continue;
    // Data-bound layer values are exposed operator fields; geometry is still protected.
    if(key==='scenes'&&(actor.user.permissions.includes('panels.operate')||actor.user.permissions.includes('data.configure'))){
-    const stripped=structuredClone(value);for(const b of old.bindings.filter(b=>b.sceneId===id&&b.destination!=='variable')){const target=stripped.layers.find(l=>l.id===b.layerId),source=previous.layers.find(l=>l.id===b.layerId);if(target&&source)target[b.property]=source[b.property];}
+    const stripped=structuredClone(value);for(const g of stripped.groups||[]){const before=previous.groups?.find(v=>v.id===g.id);if(g.repeat&&before?.repeat&&actor.user.permissions.includes('data.fetch'))g.repeat.rows=before.repeat.rows;}for(const b of old.bindings.filter(b=>b.sceneId===id&&b.destination!=='variable')){const target=stripped.layers.find(l=>l.id===b.layerId),source=previous.layers.find(l=>l.id===b.layerId);if(target&&source)target[b.property]=source[b.property];}
     if(same(previous,stripped))continue;
    }
    check(prefix+'.edit');

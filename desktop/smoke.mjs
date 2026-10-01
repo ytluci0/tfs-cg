@@ -3,6 +3,7 @@ import {writeFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
+import {productionSmoke} from './production-smoke.mjs';
 import {creativeSmoke} from './creative-smoke.mjs';
 import {panelSmoke} from './panel-smoke.mjs';
 import {aeSmoke} from './ae-smoke.mjs';
@@ -17,7 +18,7 @@ const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await sleep(100);}throw Error('Renderer readiness timed out.');}
 export async function run({app,studio,dialog,openOutput,getOutput,service,directory}){
  const errors=[],checks=[];studio.webContents.on('console-message',(_e,...args)=>{const d=args[0];if((typeof d==='object'&&d.level==='error')||d===3)errors.push(typeof d==='object'?d.message:args[1]);});
- const js=code=>studio.webContents.executeJavaScript(code),auth=(action,data)=>js(`window.broadcastCG.auth(${JSON.stringify(action)},${JSON.stringify(data)})`);
+ const js=code=>studio.webContents.executeJavaScript(code).catch(e=>{throw Error(e.message+'\nQA script: '+code.slice(0,1500)+'\nRenderer errors: '+errors.slice(-4).join('\n'));}),auth=(action,data)=>js(`window.broadcastCG.auth(${JSON.stringify(action)},${JSON.stringify(data)})`);
  const capture=async name=>{studio.show();studio.focus();await sleep(600);for(let n=0;n<3;n++){try{writeFileSync(join(directory,name),(await studio.webContents.capturePage()).toPNG());return;}catch(e){if(n===2)throw e;await sleep(400);}}};
  async function reload(){studio.reload();await until(()=>js("document.querySelector('.studio')!==null").catch(()=>false));await sleep(150);}
  async function api(path,body){return js(`fetch(${JSON.stringify(path)},${JSON.stringify(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})}).then(async r=>({status:r.status,value:await r.json()}))`);}
@@ -32,6 +33,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
  await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
+ await productionSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
  const command={projectId:p.id,scene:p.scenes[0],variables:p.variables,mode:'show'};
  assert.equal((await api('/api/program',command)).status,503);openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());
  const take=await api('/api/program',command);assert.equal(take.status,200,JSON.stringify(take));

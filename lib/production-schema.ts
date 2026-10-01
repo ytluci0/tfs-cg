@@ -1,0 +1,11 @@
+import {z} from 'zod';
+const id=z.string().max(100),coordinate=z.number().finite().min(-20000).max(20000);
+export const layoutSchema=z.object({mode:z.enum(['fixed','text','fit','after','below']),target:id.optional(),padding:z.number().min(0).max(1000).optional(),gap:coordinate.optional(),minWidth:z.number().min(1).max(20000).optional(),maxWidth:z.number().min(1).max(20000).optional()});
+export const rowSchema=z.record(z.string().max(100),z.union([z.string().max(2000),z.number().finite(),z.boolean()]));
+export const repeatSchema=z.object({sourceId:id,rowsPath:z.string().max(300),fields:z.record(z.string().max(100),z.string().max(300)),rows:z.array(rowSchema).max(100),direction:z.enum(['vertical','horizontal','grid','bracket']),gapX:coordinate,gapY:coordinate,columns:z.number().int().min(1).max(16),limit:z.number().int().min(1).max(100),sortBy:z.string().max(100).optional(),descending:z.boolean().optional()});
+export const groupTransformSchema=z.object({x:coordinate,y:coordinate,scaleX:z.number().min(.01).max(100),scaleY:z.number().min(.01).max(100),rotation:z.number().min(-3600).max(3600),originX:coordinate,originY:coordinate});
+export const mediaSchema=z.object({loop:z.boolean(),speed:z.number().min(.1).max(10),start:z.number().min(0).max(86400),duration:z.number().min(0).max(86400).optional()});
+export const tickerSchema=z.object({speed:z.number().min(-2000).max(2000),gap:z.number().min(0).max(2000)});
+export const graphicLinkSchema=z.object({componentId:id,layerId:id,instanceId:id,prefix:z.string().max(50),offsetX:coordinate,offsetY:coordinate});
+export const hardwareSchema=z.object({kind:z.enum(['key','midi','gamepad']),code:z.number().int().min(0).max(255),channel:z.number().int().min(0).max(15).optional(),device:z.string().max(300).optional(),feedback:z.boolean().optional()});
+export const widgetSchema=z.object({mode:z.enum(['cards','dropzone','tabs']),columns:z.number().int().min(1).max(8),title:z.string().max(500),subtitle:z.string().max(500),photo:z.string().max(500)});
