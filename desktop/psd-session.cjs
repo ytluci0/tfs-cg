@@ -3,7 +3,7 @@ const {basename}=require('node:path');
 const {randomUUID}=require('node:crypto');
 
 // One bounded parser at a time. Parsed pixels never enter the database until commit.
-function createPsdSessions({workerPath,authorize,commit,timeoutMs=60000}){
+function createPsdSessions({workerPath,authorize,commit,timeoutMs=180000}){
  let pending=null,draft=null;
  function clear(){draft=null;if(pending){const p=pending;pending=null;p.worker.terminate();p.reject(Error('PSD import cancelled.'));}}
  return{
@@ -12,7 +12,7 @@ function createPsdSessions({workerPath,authorize,commit,timeoutMs=60000}){
    authorize(token);if(pending)throw Error('A PSD is already being inspected.');draft=null;
    const value=await new Promise((resolve,reject)=>{
     const worker=new Worker(workerPath,{workerData:{file,name:basename(file)},resourceLimits:{maxOldGenerationSizeMb:384,stackSizeMb:8}});
-    const timer=setTimeout(()=>{worker.terminate();finish(Error('PSD inspection exceeded 60 seconds. Reduce document size and try again.'));},timeoutMs);
+    const timer=setTimeout(()=>{worker.terminate();finish(Error(`PSD inspection exceeded ${Math.ceil(timeoutMs/1000)} seconds. Reduce document size and try again.`));},timeoutMs);
     const finish=(error,result)=>{clearTimeout(timer);if(pending?.worker===worker)pending=null;worker.terminate();error?reject(error):resolve(result);};
     pending={worker,reject:e=>finish(e)};
     worker.once('message',m=>finish(m.ok?null:Error(m.error),m.result));worker.once('error',()=>finish(Error('PSD parser stopped. Reduce document size and try again.')));

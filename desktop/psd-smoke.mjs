@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import {writeFileSync} from 'node:fs';
+import {writeFileSync,statSync} from 'node:fs';
 import {join} from 'node:path';
-import {psdFixture} from '../tests/fixtures/psd.mjs';
+import {psdFixture,largePsdFixture} from '../tests/fixtures/psd.mjs';
 
 export async function psdSmoke({studio,dialog,js,api,reload,capture,checks,sleep,until,project,directory,getOutput}){
- const file=join(directory,'Phase6-fixture.psd');writeFileSync(file,psdFixture());
+ const file=join(directory,'Phase6-fixture.psd');writeFileSync(file,largePsdFixture());assert.ok(statSync(file).size>100_000_000);
  const picker=dialog.showOpenDialog;dialog.showOpenDialog=async()=>({canceled:false,filePaths:[file]});
  const click=text=>js(`[...document.querySelectorAll('button')].find(b=>b.textContent===${JSON.stringify(text)}).click()`);
  try{
@@ -29,6 +29,8 @@ export async function psdSmoke({studio,dialog,js,api,reload,capture,checks,sleep
   const take=await api('/api/program',{projectId:project.id,scene:saved.project.scenes.at(-1),variables:saved.project.variables,mode:'show'});assert.equal(take.status,200);assert.ok(await getOutput().webContents.executeJavaScript("document.querySelector('svg').textContent.includes('EDITED LOCALLY')"));
   studio.setSize(1100,740);await sleep(200);await click('Import PSD');await until(()=>js("document.querySelector('.psd-comparison')!==null"));await capture('psd-import-compact.png');
   assert.ok(await js("(()=>{const d=document.querySelector('.psd-dialog');return d.scrollWidth<=d.clientWidth+1&&d.getBoundingClientRect().height<=innerHeight;})()"));await click('Cancel');
-  checks.push('PSD worker + native picker: review, installed fonts, cancel, zero-difference pixel fixture, atomic scene import, editable text, persistence and native output');
+  checks.push('PSD over 100 MB + worker + native picker: review, installed fonts, cancel, zero-difference pixel fixture, atomic scene import, editable text, persistence and native output');
+  writeFileSync(file,Buffer.from('invalid PSD'));await click('Import PSD');await until(()=>js("!!document.querySelector('.psd-dialog [role=alert]')"));const error=await js("document.querySelector('.psd-dialog [role=alert]').textContent");assert.match(error,/valid Photoshop PSD/);assert.ok(!error.includes('remote method'));assert.ok(await js("document.querySelector('.psd-empty').textContent.includes('2 GB')"));await click('Cancel');
+  checks.push('PSD format error is readable in the import dialog; source-size guidance matches the 2 GB parser limit');
  }finally{dialog.showOpenDialog=picker;}
 }

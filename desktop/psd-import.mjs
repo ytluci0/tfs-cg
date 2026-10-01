@@ -2,17 +2,18 @@ import {readPsd,getLayerImageData,getCompositeImageData,initializeCanvas} from '
 import {encode} from 'fast-png';
 import {randomUUID} from 'node:crypto';
 import {layer} from '../lib/studio-model.ts';
+import {PSD_LIMITS,PSD_FILE_LIMIT_LABEL,PSD_DECODED_LIMIT_LABEL} from '../lib/psd-limits.ts';
 
-export const PSD_LIMITS=Object.freeze({fileBytes:100_000_000,pixels:33_177_600,decodedBytes:256_000_000,assetBytes:10_000_000,totalAssetBytes:55_000_000,layers:250,depth:20});
+export {PSD_LIMITS};
 initializeCanvas(()=>{throw Error('Canvas decoding is disabled.');},(width,height)=>({width,height,data:new Uint8ClampedArray(width*height*4)}));
 const clamp=n=>Math.max(0,Math.min(1,n??1));
 const color=c=>c&&['r','g','b'].every(k=>Number.isFinite(c[k]))?'#'+['r','g','b'].map(k=>Math.round(Math.max(0,Math.min(255,c[k]))).toString(16).padStart(2,'0')).join(''):null;
 
 // Validate the header before the parser, and every declared bitmap before decoding it.
-export function inspectPsdHeader(input){
+export function inspectPsdHeader(input,fileBytes=input.byteLength){
  const b=Buffer.from(input.buffer,input.byteOffset,input.byteLength);
  if(b.length<26||b.toString('ascii',0,4)!=='8BPS')throw Error('Choose a valid Photoshop PSD file.');
- if(b.length>PSD_LIMITS.fileBytes)throw Error('PSD exceeds 100 MB.');
+ if(fileBytes>PSD_LIMITS.fileBytes)throw Error(`PSD exceeds ${PSD_FILE_LIMIT_LABEL}. Save a smaller copy in Photoshop.`);
  if(b.readUInt16BE(4)!==1)throw Error('PSB is not supported. Save a standard PSD from Photoshop.');
  if(b.readUInt16BE(22)!==8||b.readUInt16BE(24)!==3)throw Error('Use an 8-bit RGB PSD. Convert the document in Photoshop first.');
  const height=b.readUInt32BE(14),width=b.readUInt32BE(18);
@@ -44,7 +45,7 @@ export function convertPsd(input,fileName='Imported PSD.psd'){
    if(![w,h,b.left??0,b.top??0].every(Number.isFinite)||w<0||h<0||w>20000||h>20000||w*h>PSD_LIMITS.pixels)throw Error('A PSD layer or mask exceeds the bitmap limits.');
    decoded+=w*h*4;
   }
-  if(decoded>PSD_LIMITS.decodedBytes)throw Error('PSD decompressed image data exceeds 256 MB.');
+  if(decoded>PSD_LIMITS.decodedBytes)throw Error(`PSD decompressed image data exceeds ${PSD_DECODED_LIMIT_LABEL}. Reduce the dimensions or layers in a copy of the PSD.`);
   node.children?.forEach(n=>bound(n,depth+1));
  }
  psd.children?.forEach(n=>bound(n,0));

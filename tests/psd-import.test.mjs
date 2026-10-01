@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,writeFileSync,readdirSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync,readdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {DatabaseSync} from 'node:sqlite';
@@ -9,9 +9,37 @@ import {convertPsd,inspectPsdHeader} from '../desktop/psd-import.mjs';
 import {defaultProject,sceneSchema} from '../lib/studio-model.ts';
 import {psdScene,sceneTree} from '../lib/psd-model.ts';
 import {createLocalService} from '../desktop/local-service.mjs';
-import {psdFixture,fixtureDocument,bitmap} from './fixtures/psd.mjs';
+import {psdFixture,fixtureDocument,bitmap,largePsdFixture,largePixelPsdFixture} from './fixtures/psd.mjs';
+import {readPsdFile,PSD_MEMORY_HEADROOM} from '../desktop/psd-file.mjs';
+import {PSD_LIMITS,psdImportError} from '../lib/psd-limits.ts';
 import {createPsdSessions} from '../desktop/psd-session.cjs';
 const options=(projectId='',revision=1,mode='editable')=>({id:'review',projectId,revision,mode,fonts:{ArialMT:'Arial'},fontStatus:'checked',missingFonts:[]});
+
+test('PSD larger than 100 MB reads locally without changing source or losing layers',async t=>{
+ const directory=mkdtempSync(join(tmpdir(),'broadcastcg-psd-')),file=join(directory,'Large.psd'),source=largePsdFixture();
+ t.after(()=>{assert.ok(directory.startsWith(join(tmpdir(),'broadcastcg-psd-')));rmSync(directory,{recursive:true,force:true});});
+ assert.ok(source.length>100_000_000);writeFileSync(file,source);
+ const bytes=await readPsdFile(file),draft=convertPsd(bytes,'Large.psd');
+ assert.deepEqual(readFileSync(file),source);assert.equal(draft.scene.layers.length,5);assert.equal(draft.scene.groups.length,1);assert.equal(draft.scene.layers.find(l=>l.name==='Presenter').type,'text');assert.ok(draft.referenceSrc);
+});
+test('PSD larger than 100 MB of actual uncompressed pixels decodes the saved composite',()=>{
+ const source=largePixelPsdFixture();assert.ok(source.length>100_000_000);
+ const draft=convertPsd(source),image=decode(draft.assets.find(a=>'/api/assets/'+a.id===draft.referenceSrc).bytes);
+ assert.equal(image.width,6400);assert.equal(image.height,4000);assert.deepEqual([...image.data.slice(0,4)],[20,60,180,255]);assert.deepEqual([...image.data.slice(-4)],[20,60,180,255]);assert.equal(psdScene(draft,options('',1,'composite')).layers.length,1);
+});
+test('large PSD preflight retains format/size checks and rejects insufficient memory before reading the file',async t=>{
+ const directory=mkdtempSync(join(tmpdir(),'broadcastcg-psd-')),file=join(directory,'Small.psd'),source=psdFixture();
+ t.after(()=>{assert.ok(directory.startsWith(join(tmpdir(),'broadcastcg-psd-')));rmSync(directory,{recursive:true,force:true});});
+ const header=source.subarray(0,26);assert.equal(inspectPsdHeader(header,PSD_LIMITS.fileBytes).width,640);assert.throws(()=>inspectPsdHeader(header,PSD_LIMITS.fileBytes+1),/2 GB/);
+ writeFileSync(file,source);await assert.rejects(readPsdFile(file,{availableMemory:()=>PSD_MEMORY_HEADROOM}),/Not enough free memory/);
+ const unsupported=Buffer.from(header);unsupported.writeUInt16BE(2,4);writeFileSync(file,unsupported);
+ await assert.rejects(readPsdFile(file,{availableMemory:()=>{throw Error('Memory allocation must not precede format validation');}}),/PSB/);
+});
+test('PSD errors show the actionable reason without Electron IPC internals',()=>{
+ assert.equal(psdImportError(Error("Error invoking remote method 'broadcastcg:preparePsd': Error: Not enough free memory.")),'Not enough free memory.');
+ assert.equal(psdImportError(Error("Error invoking remote method 'broadcastcg:commitPsd': Error: Project changed.")),'Project changed.');
+ assert.equal(psdImportError(Error('PSD canvas exceeds limits.')),'PSD canvas exceeds limits.');
+});
 test('PSD preserves layer stacking, nested groups, hidden state, pixels and editable point text',()=>{
  const draft=convertPsd(psdFixture(),'Lower third.psd'),scene=sceneSchema.parse(psdScene(draft,options()));
  assert.equal(scene.name,'Lower third');assert.equal(scene.width,640);assert.equal(scene.layers.length,5);assert.equal(scene.groups.length,1);
