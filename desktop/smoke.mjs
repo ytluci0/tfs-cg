@@ -4,6 +4,7 @@ import {randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
 import {panelSmoke} from './panel-smoke.mjs';
+import {aeSmoke} from './ae-smoke.mjs';
 import {psdSmoke} from './psd-smoke.mjs';
 import {sportsSmoke} from './sports-smoke.mjs';
 import {commandSmoke} from './command-smoke.mjs';
@@ -32,6 +33,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  await commandSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await sportsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,getOutput});
  await psdSmoke({studio,dialog,js,api,reload,capture,checks,sleep,until,project:p,directory,getOutput});
+ await aeSmoke({studio,dialog,js,api,reload,capture,checks,sleep,until,project:p,directory,getOutput});
  await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Accounts & access').click()");await until(()=>js("document.querySelector('.account-table tbody tr')!==null"));await capture('accounts-admin.png');
  const viewer=await auth('createUser',{username:'qa_viewer',displayName:'QA Viewer',password,role:'VIEWER',enabled:true,allWorkspaces:false,workspaceIds:[p.id]});
  await auth('logout');assert.equal((await api('/api/projects')).status,401);

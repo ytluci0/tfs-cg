@@ -2,7 +2,7 @@
   "appId": "local.broadcastcg.studio",
   "productName": "BroadcastCG",
   "directories": { "output": "release", "buildResources": "assets" },
-  "files": ["main.cjs", "psd-session.cjs", "preload.cjs", "window-state.cjs", "app/**/*", "!app/smoke.cjs", "assets/icon.ico", "assets/PSD-LICENSES.txt", "package.json"],
+  "files": ["main.cjs", "psd-session.cjs", "ae-session.cjs", "assets/BroadcastCG-AE-Export.jsx", "preload.cjs", "window-state.cjs", "app/**/*", "!app/smoke.cjs", "assets/icon.ico", "assets/PSD-LICENSES.txt", "package.json"],
   "asar": true,
   "npmRebuild": false,
   "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "assets/icon.ico", "artifactName": "BroadcastCG-Setup-x64.${ext}" },

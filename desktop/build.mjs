@@ -17,6 +17,7 @@ await viteBuild({
 await bundle({absWorkingDir:root,entryPoints: ['desktop/local-service.mjs'], outfile: 'desktop/app/service.cjs', bundle: true, platform: 'node', format: 'cjs', target: 'node24',tsconfigRaw:{}});
 await bundle({absWorkingDir:root,entryPoints: ['desktop/smoke.mjs'], outfile: 'desktop/app/smoke.cjs', bundle: true, platform: 'node', format: 'cjs', target: 'node24',tsconfigRaw:{}});
 await bundle({absWorkingDir:root,entryPoints:['desktop/psd-worker.mjs'],outfile:'desktop/app/psd-worker.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',tsconfigRaw:{}});
+await bundle({absWorkingDir:root,entryPoints:['desktop/ae-worker.mjs'],outfile:'desktop/app/ae-worker.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',tsconfigRaw:{}});
 // Code-native icon: scalable source with PNG-backed Windows ICO sizes.
 const icon = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256"><rect width="256" height="256" rx="48" fill="#141c29"/><path d="M48 48h68v24H72v112h44v24H48zm160 0v160h-68v-24h44V72h-44V48z" fill="#ff7b26"/><path d="m107 93 56 35-56 35z" fill="#f2f5f9"/></svg>`;
 const sizes = [16, 32, 48, 64, 128, 256];

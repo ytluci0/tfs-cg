@@ -3,6 +3,7 @@ const {join,resolve,relative,isAbsolute,extname}=require('node:path');
 const fs=require('node:fs');
 const os=require('node:os');
 const {createPsdSessions}=require('./psd-session.cjs');
+const {createAeSessions}=require('./ae-session.cjs');
 const {restoreBounds}=require('./window-state.cjs');
 const {createLocalService,ServiceError}=require('./app/service.cjs');
 
@@ -13,7 +14,7 @@ if(qa)app.setPath('userData',join(__dirname,'.cache','smoke-profile-'+Date.now()
 const dataDirectory=join(app.getPath('userData'),'data');
 protocol.registerSchemesAsPrivileged([{scheme:'broadcastcg',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 let studio,output,service,quitting=false,logPath,outputReady=false,lastOutputAck=null,outputUnconfirmed=false,powerBlock;
-let currentToken=null,psdSessions;
+let currentToken=null,psdSessions,aeSessions;
 const rememberFile=join(dataDirectory,'remembered-login.bin');
 function clearRemember(){fs.rmSync(rememberFile,{force:true});}
 function acceptSession(result){
@@ -88,7 +89,7 @@ function settings(){return{workstation:os.hostname(),role:'Graphics operator',lo
 function ipc(name,fn){ipcMain.handle('broadcastcg:'+name,async(event,...args)=>{if(!trustedStudio(event))throw Error('Operation not allowed.');return fn(...args);});}
 function registerIpc(){
   ipc('auth',async(action,data={})=>{try{
-    if(['logout','login','setup','changePassword'].includes(action))psdSessions?.clear();
+    if(['logout','login','setup','changePassword'].includes(action)){psdSessions?.clear();aeSessions?.clear();}
     let value;
     if(action==='bootstrap')value=service.auth.bootstrap();
     else if(action==='setup'||action==='login'){
@@ -101,7 +102,7 @@ function registerIpc(){
     else throw new ServiceError('Unknown account operation.',400);
     return {ok:true,value};
   }catch(error){return{ok:false,status:error.status||500,error:error instanceof ServiceError?error.message:'The local account operation failed.'};}});
-  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local Photoshop PSD import',...status()};});
+  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local After Effects conversion',...status()};});
   ipc('status',()=>{authorize();return status();});ipc('settings',()=>{authorize();return settings();});
   ipc('saveSettings',value=>{
     authorize('system.configure');
@@ -135,6 +136,28 @@ function registerIpc(){
   });
   ipc('commitPsd',options=>psdSessions.finish(options,currentToken));
   ipc('cancelPsd',()=>{psdSessions.clear();return true;});
+  ipc('prepareAe',async()=>{
+    const token=currentToken;authorize('templates.import');authorize('graphics.create');
+    const result=await dialog.showOpenDialog(studio,{title:'Import After Effects conversion',properties:['openFile'],filters:[{name:'BroadcastCG AE package',extensions:['bcae']}]});
+    if(result.canceled||!result.filePaths[0])return null;
+    return aeSessions.prepare(result.filePaths[0],token);
+  });
+  ipc('commitAe',options=>aeSessions.finish(options,currentToken));
+  ipc('cancelAe',()=>{aeSessions.clear();return true;});
+  ipc('aeReference',async options=>{
+    const token=currentToken;authorize('templates.import');authorize('graphics.create');
+    const result=await dialog.showOpenDialog(studio,{title:'Attach AE reference at '+Number(options?.time).toFixed(3)+' s',properties:['openFile'],filters:[{name:'Composition reference render',extensions:['png']}]});
+    if(result.canceled||!result.filePaths[0])return null;
+    return aeSessions.reference(options,result.filePaths[0],token);
+  });
+  ipc('saveAeExporter',async()=>{
+    const token=currentToken;authorize('templates.import');authorize('graphics.create');
+    const result=await dialog.showSaveDialog(studio,{title:'Save the After Effects exporter',defaultPath:'BroadcastCG-AE-Export.jsx',filters:[{name:'After Effects script',extensions:['jsx']}]});
+    if(result.canceled||!result.filePath)return false;
+    service.authorize(token,'templates.import');service.authorize(token,'graphics.create');
+    if(extname(result.filePath).toLowerCase()!=='.jsx')throw Error('Save the exporter with a .jsx extension.');
+    await fs.promises.copyFile(join(__dirname,'assets','BroadcastCG-AE-Export.jsx'),result.filePath);return true;
+  });
   ipc('exportDiagnostics',async()=>{
     const token=currentToken;service.authorize(token,'diagnostics.view');
     const report={application:'BroadcastCG',version:app.getVersion(),time:new Date().toISOString(),runtime:{electron:process.versions.electron,node:process.versions.node,chrome:process.versions.chrome},status:status(),storage:service.diagnostics()};
@@ -158,6 +181,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     fs.mkdirSync(dataDirectory,{recursive:true});logPath=join(dataDirectory,'diagnostics.log');
     service=createLocalService({directory:dataDirectory,encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable.',503);return safeStorage.encryptString(value);},decrypt:bytes=>safeStorage.decryptString(bytes),beforePublish,confirmProgram,event:log,workstation:()=>service?.settings.get('preferences',{})?.workstation||os.hostname()});
     psdSessions=createPsdSessions({workerPath:join(__dirname,'app','psd-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importPsd(draft,options,token)});
+    aeSessions=createAeSessions({workerPath:join(__dirname,'app','ae-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importAe(draft,options,token)});
     if(fs.existsSync(rememberFile)){try{acceptSession(service.auth.resume(safeStorage.decryptString(fs.readFileSync(rememberFile))));}catch{clearRemember();log('REMEMBERED_LOGIN_EXPIRED');}}
     protocol.handle('broadcastcg',request=>handleRequest(request));
     const outputSession=session.fromPartition('broadcastcg-output');
@@ -186,5 +210,5 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   }).catch(error=>{log('STARTUP_FAILED','failed');dialog.showErrorBox('BroadcastCG could not start',error.message);app.exit(1);});
 }
 app.on('before-quit',()=>{quitting=true;});
-app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{psdSessions?.clear();service?.auth.endSession(currentToken);service?.close();}catch{};});
+app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{psdSessions?.clear();aeSessions?.clear();service?.auth.endSession(currentToken);service?.close();}catch{};});
 app.on('window-all-closed',()=>app.quit());

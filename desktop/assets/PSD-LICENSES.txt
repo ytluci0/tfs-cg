@@ -1,4 +1,4 @@
-BroadcastCG PSD importer — bundled dependency notices
+BroadcastCG PSD and AE importers — bundled dependency notices
 
 
 ag-psd 31.0.2
