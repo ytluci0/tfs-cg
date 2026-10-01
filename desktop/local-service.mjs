@@ -2,7 +2,7 @@ import {aeOptionsSchema,aeScene} from '../lib/ae-model.ts';
 import {psdOptionsSchema,psdScene} from '../lib/psd-model.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
-import {mkdirSync} from 'node:fs';
+import {mkdirSync,readFileSync,unlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {validateProject,sceneSchema,variablesSchema,sourceSchema,variableActionValue,textValue,applyDataBindings,action,pathValue} from '../lib/studio-model.ts';
 
@@ -35,7 +35,7 @@ function assetIds(project){
 }
 
 /** Single-workstation authority. No network listener and no cloud bindings. */
-export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>{},confirmProgram=async()=>{},event=()=>{},workstation=()=>'Local workstation',now=Date.now,monotonic}){
+export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>{},confirmProgram=async()=>{},event=()=>{},workstation=()=>'Local workstation',now=Date.now,monotonic,assertControl=()=>{}}){
   mkdirSync(directory,{recursive:true});
   const db=new DatabaseSync(join(directory,'broadcastcg.sqlite'));
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
@@ -75,6 +75,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const settings={get(key,fallback=null){const row=db.prepare('SELECT document FROM settings WHERE key=?').get(key);return row?JSON.parse(row.document):fallback;},set(key,value){db.prepare('INSERT INTO settings(key,document) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET document=excluded.document').run(key,JSON.stringify(value));}};
   audit('APPLICATION_START','local','success');
   function commitActionProject(actor,next){
+    assertControl(actor,next.id);
     next=clocks.project(next);
     const old=readProject(actor,next.id);checkProjectChanges(actor,old.project,next,requirePermission);validateProject(next);validateAssets(actor,next);
     db.exec('BEGIN IMMEDIATE');try{const revision=old.revision+1;db.prepare('UPDATE projects SET document=?,revision=?,updated_at=? WHERE id=?').run(JSON.stringify(next),revision,now(),next.id);
@@ -83,7 +84,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     }catch(e){db.exec('ROLLBACK');throw e;}
   }
   function stageSnapshot(value,project,actor){if(!value)return null;const scene=sceneSchema.parse(value.scene),variables=variablesSchema.parse(value.variables);const canonical=project.scenes.find(s=>s.id===scene.id);if(!canonical||JSON.stringify(canonical)!==JSON.stringify(scene))throw new ServiceError('Save and stage the latest graphic before running.',409);checkVariables(actor,project,variables,requirePermission);return{scene,variables};}
-  const commands=createCommandEngine({db,authenticate,requirePermission,requireWorkspace,readProject,record,now,
+  const commands=createCommandEngine({db,authenticate,requirePermission,requireWorkspace,readProject,record,now,assertControl,
     prepare(data,project,actor){
       let actions,label,output=null;
       if(data.kind==='control'){const panel=project.panels.find(p=>p.id===data.panelId),control=panel?.controls.find(c=>c.id===data.controlId);if(!control)throw new ServiceError('Control no longer exists.',404);if(control.hidden)throw new ServiceError('This control is hidden from operation.',403);actions=control.actions;label=control.label;}
@@ -126,6 +127,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       const current=actorFor(context);const mode=['hide','update','show'].includes(data.mode)?data.mode:'show';
       requirePermission(current,mode==='hide'?'graphics.clear':mode==='update'?'graphics.updateLive':'graphics.take');
       const projectId=mode==='hide'&&program?program.projectId:data.projectId;const saved=readProject(current,projectId).project;
+      assertControl(current,projectId);
       if(mode==='update'&&program?.projectId!==projectId)throw new ServiceError('Select the workspace currently on output.',409);
       let scene=data.scene===null?null:sceneSchema.parse(data.scene),variables=variablesSchema.parse(data.variables||{}),startedAt=Date.now();
       if(mode==='hide'&&program){scene=program.scene;variables=program.variables;}
@@ -155,6 +157,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     if(path==='/api/projects'&&method==='POST'){
       const data=await readJson(request),project=clocks.project(validateProject(data.project)),stamp=now();commands.assertIdle(project.id);
       const current=actorFor(context),previous=db.prepare('SELECT document FROM projects WHERE id=?').get(project.id);
+      assertControl(current,project.id);
       if(previous)requireWorkspace(current,project.id);
       checkProjectChanges(current,previous?JSON.parse(previous.document):null,project,requirePermission);validateAssets(current,project);
       db.exec('BEGIN IMMEDIATE');let next;
@@ -239,6 +242,11 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
 
   return {
     settings,auth,outputContext,
+    controlIdle:projectId=>commands.assertIdle(projectId),
+    controlActor(token,projectId){const actor=authenticate(token);readProject(actor,projectId);return actor;},
+    recordNetwork:(action,target,status,actor)=>record(action,target,status,actor,{projectId:target||null}),
+    networkSnapshot(token){const actor=authenticate(token);requirePermission(actor,'projects.view');return{actor,projects:db.prepare('SELECT id,name,revision,updated_at FROM projects ORDER BY updated_at DESC').all().filter(p=>canAccess(actor,p.id)),program:actor.user.permissions.includes('outputs.view')&&(!program||canAccess(actor,program.projectId))?liveProgram():null};},
+    backup(token){const actor=authenticate(token);requirePermission(actor,'system.configure');const file=join(directory,'network-backup-'+randomUUID()+'.sqlite');try{db.prepare('VACUUM INTO ?').run(file);return readFileSync(file);}finally{try{unlinkSync(file);}catch{}}},
     authorize(token,permission){const actor=authenticate(token);if(permission)requirePermission(actor,permission);return actor;},
     health(){try{return Number.isInteger(db.prepare('PRAGMA schema_version').get().schema_version);}catch{return false;}},
     async handle(request,context){try{return await route(request,context);}catch(e){const status=e instanceof ServiceError?e.status:e?.issues?400:500;if(status>=500)event('SERVICE_ERROR','failed');return json({error:e instanceof ServiceError?e.message:e?.issues?'Project validation failed. Existing data was preserved.':'The local service could not complete the operation.'},status);}},
@@ -246,6 +254,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     importPsd(draft,raw,token){
       const options=psdOptionsSchema.parse(raw),actor=authenticate(token);requirePermission(actor,'templates.import');requirePermission(actor,'graphics.create');
       const old=readProject(actor,options.projectId);commands.assertIdle(options.projectId);
+      assertControl(actor,options.projectId);
       if(old.revision!==options.revision)throw new ServiceError('Workspace changed during PSD review. Save and inspect the latest project before importing.',409);
       let scene=sceneSchema.parse(psdScene(draft,options));scene.id=randomUUID();
       const used=new Set(assetIds(scene)),assets=draft.assets.filter(a=>used.has(a.id));
@@ -262,6 +271,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     importAe(draft,raw,token){
       const options=aeOptionsSchema.parse(raw),actor=authenticate(token);requirePermission(actor,'templates.import');requirePermission(actor,'graphics.create');
       const old=readProject(actor,options.projectId);commands.assertIdle(options.projectId);
+      assertControl(actor,options.projectId);
       if(old.revision!==options.revision)throw new ServiceError('Workspace changed during AE review. Save and inspect the latest project before importing.',409);
       let scene=sceneSchema.parse(aeScene(draft,options));scene.id=randomUUID();
       const used=new Set(assetIds(scene)),assets=draft.assets.filter(a=>used.has(a.id));

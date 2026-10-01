@@ -6,6 +6,9 @@ const {createPsdSessions}=require('./psd-session.cjs');
 const {createAeSessions}=require('./ae-session.cjs');
 const {restoreBounds}=require('./window-state.cjs');
 const {createLocalService,ServiceError}=require('./app/service.cjs');
+const {createRemoteAuthority,serverProfile,provisionServer,loadServer,restoreServer}=require('./app/network-runtime.cjs');
+const {randomUUID,createHash}=require('node:crypto');
+const {spawn}=require('node:child_process');
 
 app.setName('BroadcastCG');
 app.setAppUserModelId('local.broadcastcg.studio');
@@ -14,8 +17,9 @@ if(qa)app.setPath('userData',join(__dirname,'.cache','smoke-profile-'+Date.now()
 const dataDirectory=join(app.getPath('userData'),'data');
 protocol.registerSchemesAsPrivileged([{scheme:'broadcastcg',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 let studio,output,service,quitting=false,logPath,outputReady=false,lastOutputAck=null,outputUnconfirmed=false,powerBlock;
-let currentToken=null,psdSessions,aeSessions;
-const rememberFile=join(dataDirectory,'remembered-login.bin');
+let currentToken=null,psdSessions,aeSessions,localService,remote=null;
+let rememberFile=join(dataDirectory,'remembered-login.bin');
+const hostDirectory=join(app.getPath('userData'),'production-server');
 function clearRemember(){fs.rmSync(rememberFile,{force:true});}
 function acceptSession(result){
   currentToken=result.token;
@@ -82,40 +86,78 @@ function openOutput(displayId){
   if(output&&!output.isDestroyed()){if(Number.isInteger(displayId)){const d=screen.getAllDisplays().find(d=>d.id===displayId);if(d){output.setFullScreen(false);output.setBounds(d.workArea);}}output.show();output.focus();return;}
   outputReady=false;output=createWindow('output',displayId);
   output.webContents.once('did-finish-load',()=>{outputReady=true;log('OUTPUT_OPEN');});
-  output.on('closed',()=>{output=null;outputReady=false;outputUnconfirmed=true;log('OUTPUT_CLOSED');});
+  output.on('closed',()=>{remote?.releaseOutput();output=null;outputReady=false;outputUnconfirmed=true;log('OUTPUT_CLOSED');});
 }
-function status(){return{local:true,database:service?.health()?'available':'offline',output:outputReady?'connected':'offline',outputUnconfirmed,lastOutputAck,authentication:'local-accounts',network:'local-only'};}
+function status(){return remote?remote.status():{local:true,database:service?.health()?'available':'offline',output:outputReady?'connected':'offline',outputUnconfirmed,lastOutputAck,authentication:'local-accounts',network:'local-only'};}
+function activateProfile(id){
+ remote?.close();remote=null;currentToken=null;service=localService;
+ if(id){const profile=localService.settings.get('serverProfiles',[]).find(p=>p.id===id);if(!profile)throw Error('Saved server not found.');let bootstrapSecret='';try{const c=loadServer(hostDirectory);if(c.fingerprint===profile.fingerprint&&['127.0.0.1','localhost'].includes(new URL(profile.url).hostname))bootstrapSecret=c.bootstrapSecret;}catch{}
+  const draftFile=user=>join(dataDirectory,'remote-draft-'+createHash('sha256').update(profile.id+':'+user).digest('hex')+'.bin');
+  const recoveryStore={read(user){const file=draftFile(user);return fs.existsSync(file)?JSON.parse(safeStorage.decryptString(fs.readFileSync(file))):null;},write(user,value){if(!safeStorage.isEncryptionAvailable())throw Error('Windows draft protection is unavailable.');const file=draftFile(user);fs.writeFileSync(file+'.partial',safeStorage.encryptString(JSON.stringify(value)));fs.renameSync(file+'.partial',file);},clear(user){fs.rmSync(draftFile(user),{force:true});}};
+  remote=createRemoteAuthority({profile,settings:localService.settings,workstation:settings().workstation,bootstrapSecret,recoveryStore,onState:state=>studio?.webContents.send('broadcastcg:network',state),onProgram:program=>{if(outputReady)output.webContents.send('broadcastcg:program',program);},onLost:message=>{outputUnconfirmed=true;studio?.webContents.send('broadcastcg:network',{error:message,status:status()});}});service=remote;
+ }
+ rememberFile=join(dataDirectory,id?'remembered-server-'+id+'.bin':'remembered-login.bin');localService.settings.set('activeServer',id||null);
+}
+function connectionInfo(){let host=null;try{const c=loadServer(hostDirectory);host={name:c.name,host:c.host,port:c.port,fingerprint:c.fingerprint,directory:hostDirectory,running:fs.existsSync(join(hostDirectory,'server.lock')),mode:'User background process (starts at Windows sign-in when enabled)'};}catch{}return{profiles:localService.settings.get('serverProfiles',[]),activeId:localService.settings.get('activeServer'),backupId:localService.settings.get('backupServer'),status:status(),host};}
+async function startHost(){
+ const c=loadServer(hostDirectory),probe=createRemoteAuthority({profile:{name:c.name,url:'https://127.0.0.1:'+c.port,fingerprint:c.fingerprint},settings:localService.settings});try{await probe.test();return;}catch{}finally{probe.close();}
+ const log=fs.openSync(join(hostDirectory,'server.log'),'a');const child=spawn(process.execPath,[join(__dirname,'app/server-entry.cjs'),hostDirectory],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},windowsHide:true,detached:true,stdio:['ignore',log,log]});child.unref();fs.closeSync(log);
+ for(let i=0;i<40;i++){await new Promise(r=>setTimeout(r,250));const test=createRemoteAuthority({profile:{name:c.name,url:'https://127.0.0.1:'+c.port,fingerprint:c.fingerprint},settings:localService.settings});try{await test.test();return;}catch{}finally{test.close();}}
+ throw Error('Server did not start. Check the server.log in its data folder.');
+}
 function settings(){return{workstation:os.hostname(),role:'Graphics operator',location:'',uiScale:1,startup:false,...service.settings.get('preferences',{}),displays:screen.getAllDisplays().map(d=>({id:d.id,label:d.label||'Display '+d.id,width:d.size.width,height:d.size.height,scaleFactor:d.scaleFactor}))};}
 function ipc(name,fn){ipcMain.handle('broadcastcg:'+name,async(event,...args)=>{if(!trustedStudio(event))throw Error('Operation not allowed.');return fn(...args);});}
 function registerIpc(){
+ ipc('network',async(action,data={})=>{
+  if(action==='info')return connectionInfo();
+  if(action==='test'){const client=createRemoteAuthority({profile:serverProfile(data),settings:localService.settings});try{return await client.test();}finally{client.close();}}
+  if(action==='save'){const value=serverProfile(data),profiles=localService.settings.get('serverProfiles',[]);if(profiles.length>=16&&!profiles.some(p=>p.id===value.id))throw Error('Keep up to 16 server profiles.');if(value.id===localService.settings.get('activeServer'))throw Error('Switch to local mode before changing the active server.');value.id=value.id||randomUUID();localService.settings.set('serverProfiles',[...profiles.filter(p=>p.id!==value.id),value]);return connectionInfo();}
+  if(action==='backupProfile'){if(data.id&&!localService.settings.get('serverProfiles',[]).some(p=>p.id===data.id))throw Error('Choose a saved server.');localService.settings.set('backupServer',data.id||null);return connectionInfo();}
+  if(action==='switch'){if(outputReady)throw Error('Close the output window before switching authority.');if(data.id&&!localService.settings.get('serverProfiles',[]).some(p=>p.id===data.id))throw Error('Choose a saved server.');if(currentToken){try{await service.auth.endSession(currentToken);}catch{}}psdSessions.clear();aeSessions.clear();activateProfile(data.id);studio.webContents.reload();return true;}
+  if(action==='attachOutput'){authorize('outputs.configure');if(!remote)throw Error('Connect to a production server first.');if(!outputReady)throw Error('Open output first, then attach this workstation.');remote.attachOutput();return true;}
+  if(action==='releaseOutput'){authorize('outputs.configure');remote?.releaseOutput();return true;}
+  if(action==='locks'){if(!remote)throw Error('Ownership is available in server mode.');return remote.locks(data.projectId,data.operation);}
+  if(action==='provision'||action==='startHost'||action==='stopHost'||action==='hostStartup'||action==='configureHost'||action==='restoreHost'){
+   if(!localService.auth.bootstrap().setupRequired)localService.authorize(remote?null:currentToken,'system.configure');
+   if(action==='provision'){const c=await provisionServer(hostDirectory,join(__dirname,'assets/BroadcastCGHost.exe'),data);const profiles=localService.settings.get('serverProfiles',[]);if(!profiles.some(p=>p.fingerprint===c.fingerprint))localService.settings.set('serverProfiles',[...profiles,{id:randomUUID(),name:c.name,url:'https://127.0.0.1:'+c.port,fingerprint:c.fingerprint}]);}
+   if(action==='configureHost'){if(fs.existsSync(join(hostDirectory,'server.lock')))throw Error('Stop the host before changing its listen address.');if(!['127.0.0.1','0.0.0.0'].includes(data.host))throw Error('Choose a supported listen address.');const c=loadServer(hostDirectory),file=join(hostDirectory,'server.json');fs.writeFileSync(file+'.partial',JSON.stringify({...c,host:data.host},null,2));fs.renameSync(file+'.partial',file);}
+   if(action==='hostStartup'){if(typeof data.enabled!=='boolean')throw Error('Invalid startup preference.');localService.settings.set('hostStartup',data.enabled);if(app.isPackaged)app.setLoginItemSettings({openAtLogin:data.enabled||settings().startup});}
+   if(action==='startHost')await startHost();
+   if(action==='stopHost'){fs.writeFileSync(join(hostDirectory,'stop.request'),'');for(let i=0;i<40&&fs.existsSync(join(hostDirectory,'server.lock'));i++)await new Promise(r=>setTimeout(r,250));if(fs.existsSync(join(hostDirectory,'server.lock')))throw Error('Server is still stopping. Inspect its log.');}
+   if(action==='restoreHost'){const result=await dialog.showOpenDialog(studio,{title:'Restore to empty production server',properties:['openFile'],filters:[{name:'Encrypted server backup',extensions:['bcserver']}]});if(!result.canceled&&result.filePaths[0]){const file=result.filePaths[0];if(fs.statSync(file).size>200000086)throw Error('Backup exceeds 200 MB.');await restoreServer(hostDirectory,fs.readFileSync(file),data.password);}}
+   return connectionInfo();
+  }
+  if(action==='backup'){authorize('system.configure');if(!remote)throw Error('Connect to the production server first.');const bytes=await remote.backup(data.password),result=await dialog.showSaveDialog(studio,{title:'Encrypted production backup',defaultPath:'BroadcastCG-server.bcserver',filters:[{name:'Encrypted server backup',extensions:['bcserver']}]});if(result.canceled||!result.filePath)return false;fs.writeFileSync(result.filePath+'.partial',bytes);fs.renameSync(result.filePath+'.partial',result.filePath);return true;}
+  throw Error('Unsupported connection operation.');
+ });
   ipc('auth',async(action,data={})=>{try{
     if(['logout','login','setup','changePassword'].includes(action)){psdSessions?.clear();aeSessions?.clear();}
     let value;
-    if(action==='bootstrap')value=service.auth.bootstrap();
+    if(action==='bootstrap')value=await service.auth.bootstrap();
     else if(action==='setup'||action==='login'){
       if(data.remember&&!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable. Turn off Remember me to sign in.',503);
-      if(currentToken)service.auth.logout(currentToken);
+      if(currentToken)await service.auth.logout(currentToken);
       currentToken=null;clearRemember();value=acceptSession(await service.auth[action](data));
-    }else if(action==='logout'){service.auth.logout(currentToken);currentToken=null;clearRemember();value=true;}
+    }else if(action==='logout'){await service.auth.logout(currentToken);currentToken=null;clearRemember();value=true;}
     else if(action==='changePassword')value=acceptSession(await service.auth.changePassword(currentToken,data));
     else if(['me','touch','catalog','users','createUser','updateUser','resetPassword','sessions','audit','revokeSession'].includes(action))value=await service.auth[action](currentToken,data);
     else throw new ServiceError('Unknown account operation.',400);
     return {ok:true,value};
-  }catch(error){return{ok:false,status:error.status||500,error:error instanceof ServiceError?error.message:'The local account operation failed.'};}});
-  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local After Effects conversion',...status()};});
+  }catch(error){return{ok:false,status:error.status||500,error:error.status?error.message:'The account operation failed.'};}});
+  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local LAN production',...status()};});
   ipc('status',()=>{authorize();return status();});ipc('settings',()=>{authorize();return settings();});
   ipc('saveSettings',value=>{
     authorize('system.configure');
     if(!value||!['workstation','role','location'].every(k=>typeof value[k]==='string'&&value[k].length<=100)||!Number.isFinite(value.uiScale)||value.uiScale<.75||value.uiScale>1.5||typeof value.startup!=='boolean')throw Error('Invalid workstation settings.');
     const next={workstation:value.workstation,role:value.role,location:value.location,uiScale:value.uiScale,startup:value.startup};
-    if(app.isPackaged)app.setLoginItemSettings({openAtLogin:next.startup});
+    if(app.isPackaged)app.setLoginItemSettings({openAtLogin:next.startup||localService.settings.get('hostStartup',false)});
     service.settings.set('preferences',next);studio.webContents.setZoomFactor(next.uiScale);return settings();
   });
   ipc('openOutput',displayId=>{if(displayId!==undefined&&!Number.isInteger(displayId))throw Error('Choose an available display.');permittedOutput(displayId);return true;});
   ipc('exportProject',async project=>{
-    const token=currentToken,text=service.exportProject(project,token),result=await dialog.showSaveDialog(studio,{title:'Export complete local project',defaultPath:(project.name||'Project').replace(/[<>:"/\\|?*]/g,'_')+'.broadcastproject',filters:[{name:'BroadcastCG project with images',extensions:['broadcastproject']}]});
+    const token=currentToken,text=await service.exportProject(project,token),result=await dialog.showSaveDialog(studio,{title:'Export complete local project',defaultPath:(project.name||'Project').replace(/[<>:"/\\|?*]/g,'_')+'.broadcastproject',filters:[{name:'BroadcastCG project with images',extensions:['broadcastproject']}]});
     if(result.canceled||!result.filePath)return false;
-    service.exportProject(project,token);
+    await service.exportProject(project,token);
     const temporary=result.filePath+'.partial';await fs.promises.writeFile(temporary,text,{flag:'w'});await fs.promises.rename(temporary,result.filePath);log('PROJECT_EXPORT');return true;
   });
   ipc('importProject',async()=>{
@@ -123,7 +165,7 @@ function registerIpc(){
     const result=await dialog.showOpenDialog(studio,{title:'Import local project',properties:['openFile'],filters:[{name:'BroadcastCG / Frame project',extensions:['broadcastproject','json']}]});
     if(result.canceled||!result.filePaths[0])return null;
     const file=result.filePaths[0];if((await fs.promises.stat(file)).size>100000000)throw Error('Project package exceeds 100 MB.');
-    const inspected=service.inspectImport(await fs.promises.readFile(file,'utf8'),token);
+    const inspected=await service.inspectImport(await fs.promises.readFile(file,'utf8'),token);
     if(inspected.missing.length)throw Error('Import blocked: '+inspected.missing.length+' referenced image(s) are missing. Export a complete package from the original workstation.');
     if(inspected.external.length){const answer=await dialog.showMessageBox(studio,{type:'warning',title:'External dependencies',message:'This project contains '+inspected.external.length+' external data or image URL(s). They require a network connection.',detail:'Embedded images are included. External feed credentials must be configured locally. No fonts or video files are included in this package version.',buttons:['Cancel','Import project'],defaultId:0,cancelId:0});if(answer.response!==1)return null;}
     return service.importProject(inspected,token);
@@ -160,16 +202,16 @@ function registerIpc(){
   });
   ipc('exportDiagnostics',async()=>{
     const token=currentToken;service.authorize(token,'diagnostics.view');
-    const report={application:'BroadcastCG',version:app.getVersion(),time:new Date().toISOString(),runtime:{electron:process.versions.electron,node:process.versions.node,chrome:process.versions.chrome},status:status(),storage:service.diagnostics()};
+    const report={application:'BroadcastCG',version:app.getVersion(),time:new Date().toISOString(),runtime:{electron:process.versions.electron,node:process.versions.node,chrome:process.versions.chrome},status:status(),storage:await service.diagnostics()};
     const result=await dialog.showSaveDialog(studio,{title:'Export diagnostics',defaultPath:'BroadcastCG-diagnostics.json',filters:[{name:'Diagnostic report',extensions:['json']}]});
     if(result.canceled||!result.filePath)return false;
     service.authorize(token,'diagnostics.view');
     await fs.promises.writeFile(result.filePath,JSON.stringify(report,null,2));return true;
   });
-  ipcMain.on('broadcastcg:rendered',(event,revision)=>{if(event.sender!==output?.webContents||!trusted(event.senderFrame)||typeof revision!=='string')return;const waiter=pending.get(revision);if(waiter){pending.delete(revision);waiter.resolve();}});
+  ipcMain.on('broadcastcg:rendered',(event,revision)=>{if(event.sender!==output?.webContents||!trusted(event.senderFrame)||typeof revision!=='string')return;if(remote){remote.acknowledge(revision);return;}const waiter=pending.get(revision);if(waiter){pending.delete(revision);waiter.resolve();}});
 }
 function menu(){Menu.setApplicationMenu(Menu.buildFromTemplate([
-  {label:'BroadcastCG',submenu:[{label:'About BroadcastCG',click:()=>dialog.showMessageBox(studio,{type:'info',message:'BroadcastCG '+app.getVersion(),detail:'Local Windows graphics workstation with accounts, roles, workspace permissions and audit history. Shared network operators and SDI/NDI hardware output are not included.'})},{type:'separator'},{role:'quit'}]},
+  {label:'BroadcastCG',submenu:[{label:'About BroadcastCG',click:()=>dialog.showMessageBox(studio,{type:'info',message:'BroadcastCG '+app.getVersion(),detail:'Local graphics workstation and self-hosted LAN production with accounts, workspace ownership and acknowledged desktop output. SDI/NDI hardware output is not included.'})},{type:'separator'},{role:'quit'}]},
   {label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
   {label:'View',submenu:[{role:'togglefullscreen',accelerator:'F11'},{role:'resetZoom'},{role:'zoomIn'},{role:'zoomOut'}]},
   {label:'Output',submenu:[{label:'Open desktop output',click:()=>menuOutput()},...screen.getAllDisplays().map(d=>({label:'Move output to '+(d.label||'Display '+d.id),click:()=>menuOutput(d.id)}))]},
@@ -180,9 +222,10 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   app.whenReady().then(async()=>{
     fs.mkdirSync(dataDirectory,{recursive:true});logPath=join(dataDirectory,'diagnostics.log');
     service=createLocalService({directory:dataDirectory,encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable.',503);return safeStorage.encryptString(value);},decrypt:bytes=>safeStorage.decryptString(bytes),beforePublish,confirmProgram,event:log,workstation:()=>service?.settings.get('preferences',{})?.workstation||os.hostname()});
+    localService=service;if(localService.settings.get('hostStartup',false)){try{await startHost();}catch{log('PRODUCTION_HOST_START_FAILED','failed');}}activateProfile(localService.settings.get('activeServer'));
     psdSessions=createPsdSessions({workerPath:join(__dirname,'app','psd-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importPsd(draft,options,token)});
     aeSessions=createAeSessions({workerPath:join(__dirname,'app','ae-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importAe(draft,options,token)});
-    if(fs.existsSync(rememberFile)){try{acceptSession(service.auth.resume(safeStorage.decryptString(fs.readFileSync(rememberFile))));}catch{clearRemember();log('REMEMBERED_LOGIN_EXPIRED');}}
+    if(fs.existsSync(rememberFile)){try{acceptSession(await service.auth.resume(safeStorage.decryptString(fs.readFileSync(rememberFile))));}catch(error){if(error.status!==503)clearRemember();log('REMEMBERED_LOGIN_UNAVAILABLE');}}
     protocol.handle('broadcastcg',request=>handleRequest(request));
     const outputSession=session.fromPartition('broadcastcg-output');
     outputSession.protocol.handle('broadcastcg',request=>handleRequest(request,true));
@@ -210,5 +253,5 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   }).catch(error=>{log('STARTUP_FAILED','failed');dialog.showErrorBox('BroadcastCG could not start',error.message);app.exit(1);});
 }
 app.on('before-quit',()=>{quitting=true;});
-app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{psdSessions?.clear();aeSessions?.clear();service?.auth.endSession(currentToken);service?.close();}catch{};});
+app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{psdSessions?.clear();aeSessions?.clear();if(!remote)localService?.auth.endSession(currentToken);remote?.close();localService?.close();}catch{};});
 app.on('window-all-closed',()=>app.quit());

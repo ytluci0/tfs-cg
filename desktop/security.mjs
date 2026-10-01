@@ -81,8 +81,8 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
  function canAccess(actor,projectId){return !!actor&&(actor.user.allWorkspaces||actor.user.workspaceIds.includes(projectId));}
  function requireWorkspace(actor,id){requirePermission(actor,'projects.view');if(typeof id!=='string'||!canAccess(actor,id))throw new ServiceError('This workspace is not assigned to your account.',403);}
  function revokeUser(id){db.prepare('UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL').run(now(),id);db.prepare('DELETE FROM auth_remember WHERE user_id=?').run(id);}
- function issue(row,remember=false){
-  const time=now(),token=tokens(),id=randomUUID(),machine=string(workstation(),100);let rememberToken=null,rememberId=null;
+ function issue(row,remember=false,station=workstation()){
+  const time=now(),token=tokens(),id=randomUUID(),machine=string(station,100);let rememberToken=null,rememberId=null;
   if(remember&&!row.must_change_password){rememberToken=tokens();rememberId=randomUUID();db.prepare('INSERT INTO auth_remember(id,user_id,token_hash,expires_at,workstation) VALUES(?,?,?,?,?)').run(rememberId,row.id,tokenHash(rememberToken),time+REMEMBER_MS,machine);}
   db.prepare('INSERT INTO auth_sessions(id,user_id,token_hash,created_at,last_seen,expires_at,idle_expires_at,remember_id,workstation) VALUES(?,?,?,?,?,?,?,?,?)').run(id,row.id,tokenHash(token),time,time,time+SESSION_MS,time+IDLE_MS,rememberId,machine);
   db.prepare('UPDATE auth_users SET last_login=? WHERE id=?').run(time,row.id);
@@ -101,6 +101,7 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
  const auth={
   bootstrap(){return{setupRequired:!db.prepare('SELECT 1 FROM auth_users LIMIT 1').get(),passwordMinimum:15,idleMinutes:30,sessionHours:12,rememberDays:30};},
   async setup(data){return hashOperation(async()=>{
+   const station=string(data.workstation||workstation(),100);data={...data,workstation:station};
    if(!auth.bootstrap().setupRequired)throw new ServiceError('Administrator setup is already complete.',409);
    const name=username(data.username),displayName=string(data.displayName||data.username),hash=await passwordHash(data.password),id=randomUUID();
    db.exec('BEGIN IMMEDIATE');try{
@@ -109,20 +110,21 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
     const recovery=db.prepare('SELECT * FROM legacy_recovery LIMIT 1').get();if(recovery)db.prepare('INSERT INTO recovery(user_id,document,revision,updated_at) VALUES(?,?,?,?)').run(id,recovery.document,recovery.revision,recovery.updated_at);
     db.prepare('DELETE FROM legacy_recovery').run();db.prepare('UPDATE assets SET uploaded_by=? WHERE uploaded_by IS NULL').run(id);db.exec('COMMIT');
    }catch(e){db.exec('ROLLBACK');throw e;}
-   record('ADMIN_SETUP',id,'success');return issue(db.prepare('SELECT * FROM auth_users WHERE id=?').get(id),data.remember===true);
+   record('ADMIN_SETUP',id,'success');return issue(db.prepare('SELECT * FROM auth_users WHERE id=?').get(id),data.remember===true,data.workstation||workstation());
   });},
   async login(data){return hashOperation(async()=>{
+   string(data?.workstation||workstation(),100);
    const name=typeof data?.username==='string'&&/^[a-z][a-z0-9_.-]{2,31}$/i.test(data.username.trim())?data.username.trim().toLowerCase():'invalid';checkLimit(name);
    const old=db.prepare('SELECT * FROM auth_users WHERE username=?').get(name),valid=await verify(data?.password,old?.password_hash),row=old?db.prepare('SELECT * FROM auth_users WHERE id=?').get(old.id):null;
    if(!valid||!row?.enabled||old.password_hash!==row.password_hash){failure(name);throw new ServiceError('Incorrect username or password, or account unavailable.',401);}
-   db.prepare('DELETE FROM auth_failures WHERE identity=?').run(name);return issue(row,data.remember===true);
+   db.prepare('DELETE FROM auth_failures WHERE identity=?').run(name);return issue(row,data.remember===true,data.workstation||workstation());
   });},
-  resume(rememberToken){
+  resume(rememberToken,station=workstation()){
    if(typeof rememberToken!=='string'||rememberToken.length>100)throw new ServiceError('Remembered login expired. Sign in again.',401);
    const saved=db.prepare('SELECT * FROM auth_remember WHERE token_hash=?').get(tokenHash(rememberToken));
    if(!saved||saved.expires_at<=now())throw new ServiceError('Remembered login expired. Sign in again.',401);
    const row=db.prepare('SELECT * FROM auth_users WHERE id=?').get(saved.user_id);if(!row?.enabled||row.must_change_password)throw new ServiceError('Sign in again.',401);
-   db.exec('BEGIN IMMEDIATE');try{db.prepare('DELETE FROM auth_remember WHERE id=?').run(saved.id);db.prepare('UPDATE auth_sessions SET revoked_at=? WHERE remember_id=?').run(now(),saved.id);const result=issue(row,true);db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}
+   db.exec('BEGIN IMMEDIATE');try{db.prepare('DELETE FROM auth_remember WHERE id=?').run(saved.id);db.prepare('UPDATE auth_sessions SET revoked_at=? WHERE remember_id=?').run(now(),saved.id);const result=issue(row,true,station);db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}
   },
   me(token){return publicSession(authenticate(token,{allowPasswordChange:true}));},
   touch(token){const actor=authenticate(token,{allowPasswordChange:true});db.prepare('UPDATE auth_sessions SET last_seen=?,idle_expires_at=? WHERE id=?').run(now(),Math.min(now()+IDLE_MS,actor.expiresAt),actor.sessionId);return true;},
@@ -132,7 +134,7 @@ export function createSecurity({db,now=Date.now,workstation=()=> 'Local workstat
    const actor=authenticate(token,{allowPasswordChange:true}),old=db.prepare('SELECT password_hash FROM auth_users WHERE id=?').get(actor.user.id);
    checkLimit(actor.user.username);if(!await verify(data.currentPassword,old.password_hash)){failure(actor.user.username);throw new ServiceError('Current password is incorrect.',401);}
    const hash=await passwordHash(data.password);authenticate(token,{allowPasswordChange:true});
-   db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE auth_users SET password_hash=?,must_change_password=0 WHERE id=?').run(hash,actor.user.id);revokeUser(actor.user.id);record('PASSWORD_CHANGED',actor.user.id,'success',actor);const result=issue(db.prepare('SELECT * FROM auth_users WHERE id=?').get(actor.user.id));db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}
+   db.exec('BEGIN IMMEDIATE');try{db.prepare('UPDATE auth_users SET password_hash=?,must_change_password=0 WHERE id=?').run(hash,actor.user.id);revokeUser(actor.user.id);record('PASSWORD_CHANGED',actor.user.id,'success',actor);const result=issue(db.prepare('SELECT * FROM auth_users WHERE id=?').get(actor.user.id),false,actor.workstation);db.exec('COMMIT');return result;}catch(e){db.exec('ROLLBACK');throw e;}
   });},
   catalog(token){const actor=authenticate(token);requirePermission(actor,'users.manage');return{permissions:permissionLabels,roles:rolePermissions,workspaces:db.prepare('SELECT id,name FROM projects ORDER BY name').all().filter(p=>canAccess(actor,p.id))};},
   users(token){const actor=authenticate(token);requirePermission(actor,'users.manage');return db.prepare('SELECT * FROM auth_users ORDER BY username').all().map(userView);},

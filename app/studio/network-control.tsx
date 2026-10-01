@@ -1,0 +1,8 @@
+'use client';
+import {desktopBridge,type NetworkState,type WorkspaceLease} from '@/lib/desktop';
+export function NetworkControl({state,lease,canEngineer,onError,onReload,conflict}:{state:NetworkState|null;lease?:WorkspaceLease;canEngineer:boolean;onError:(e:unknown)=>void;onReload:()=>void;conflict:boolean}){
+ if(!state||state.status.local)return null;
+ const blocked=state.status.network!=='connected'||(lease?.owner&&!lease.mine)||(lease?.required&&!lease.owner);
+ const act=(operation:string)=>{if(lease)desktopBridge()?.network('locks',{projectId:lease.projectId,operation}).catch(onError);};
+ return <div className="network-lockbar" data-blocked={!!blocked}><strong>{state.status.network==='connected'?'SERVER CONNECTED':'DISCONNECTED · commands disabled'}</strong><span>{lease?.owner?`Control: ${lease.owner.username} · ${lease.owner.workstation}${lease.mine?' (you)':''}`:lease?.required?'Control required':'Shared workspace'}</span>{lease&&<><button onClick={()=>act(lease.mine?'release':'request')}>{lease.mine?'Release control':'Request control'}</button>{canEngineer&&<><button onClick={()=>act('takeover')}>Take control</button><button onClick={()=>act(lease.required?'optional':'require')}>{lease.required?'Allow shared control':'Require ownership'}</button></>}</>}{lease?.mine&&lease.requests.length>0&&<span>{lease.requests.map(r=>r.username+' on '+r.workstation).join(', ')} requested control</span>}{conflict&&<><strong>Server changed · your unsaved draft is preserved</strong><button onClick={onReload}>Use latest server version</button><span>Export your draft first if you need to keep it.</span></>}</div>;
+}

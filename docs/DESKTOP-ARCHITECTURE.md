@@ -1,6 +1,6 @@
 # BroadcastCG local desktop migration
 
-Decision: 1 October 2026. This document records the repository inspection and the phased implementation requested in sections 33–55. The user's later instruction makes local operation mandatory: no ChatGPT account, Cloudflare service, hosted website, or cloud database is part of the desktop runtime. An eventual production server will be self-hosted on the user's LAN.
+Decision: 1 October 2026. This document records the repository inspection and the phased implementation requested in sections 33–55. The user's later instruction makes local operation mandatory: no ChatGPT account, Cloudflare service, hosted website, or cloud database is part of the desktop runtime. Phase 8 adds an optional self-hosted production server on the user's LAN.
 
 ## 1. Architecture found in the repository
 
@@ -35,7 +35,7 @@ Replace cloud storage/authentication with local services; split renderer, native
 
 Use Electron, pinned to 44.5.1 for this foundation. It bundles the rendering engine and Node runtime, supports the existing React/TypeScript project directly, and avoids changing rendering behavior based on each workstation's WebView2 installation. Tauri remains a reasonable smaller alternative but introduces Rust development and WebView2 qualification without reducing the current application's larger architecture gaps.
 
-The desktop renderer is sandboxed with context isolation, Node integration disabled, a restrictive content security policy and a narrow validated preload bridge. Only local bundled code is navigable. Permissions and arbitrary popup windows are denied. `broadcastcg://app` is an internal protocol, not a listening localhost server. There is no HTTP port, public deployment or hidden hosted-site fallback.
+The desktop renderer is sandboxed with context isolation, Node integration disabled, a restrictive content security policy and a narrow validated preload bridge. Only local bundled code is navigable. Permissions and arbitrary popup windows are denied. `broadcastcg://app` is an internal protocol, not a listening localhost server. Local mode opens no network port. Phase 8 optionally starts a separately provisioned HTTPS server; there is no public deployment or hosted-site fallback.
 
 References: [Electron security](https://www.electronjs.org/docs/latest/tutorial/security), [custom protocols](https://www.electronjs.org/docs/latest/api/protocol), [Tauri WebView versions](https://v2.tauri.app/reference/webview-versions/), [Electron release information](https://releases.electronjs.org/release?channel=stable).
 
@@ -45,7 +45,7 @@ References: [Electron security](https://www.electronjs.org/docs/latest/tutorial/
 
 The native process owns the SQLite connection in this phase. Documents and images are size-limited. Synchronous database calls must be moved to a dedicated local service/utility process and profiled before broadcast qualification; this phase does not claim nonblocking database latency under heavy media load.
 
-**Proposed production architecture:** the same application service contract gains a local IPC adapter and a self-hosted LAN HTTPS/WebSocket adapter. A Windows service owns command handling, sessions, workspace grants, output channels, engine connections and an append-only event stream. SQLite remains suitable for a single service with controlled writes; PostgreSQL on the user's own server is recommended when multiple shows/operators and operational tooling justify it. No cloud provider is required.
+**Production direction (phase 8 now implements the single-server HTTPS/WebSocket subset; see LAN-PRODUCTION.md):** the same application service contract gains a local IPC adapter and a self-hosted LAN HTTPS/WebSocket adapter. A Windows service owns command handling, sessions, workspace grants, output channels, engine connections and an append-only event stream. SQLite remains suitable for a single service with controlled writes; PostgreSQL on the user's own server is recommended when multiple shows/operators and operational tooling justify it. No cloud provider is required.
 
 Network commands carry command ID, workspace, actor/session, workstation, expected revision, target channel and ownership lease. The server validates permissions/ownership, applies atomic updates, records outcome, and broadcasts ordered events. Clients reconcile a snapshot plus event sequence after reconnect. Never blindly retry TAKE, CLEAR or macros after a lost response; query command outcome and actual engine state. Score increments are atomic commands, not whole-document last-write wins. Backups must use consistent database snapshots, not copies of a live SQLite WAL pair.
 
@@ -55,7 +55,7 @@ Phase 2 implements local administrator setup, password login/logout, disabled us
 
 Permission checks protect project changes, exposed operator fields, source endpoints/credentials, images, import/export, recovery, output commands and native settings. A dedicated output session has a main-process-only read capability for the active program and its media. Logout and session expiry lock controls without clearing output. See [account behavior, roles and limits](LOCAL-ACCOUNTS.md).
 
-This is one local authority, not a shared LAN server. App accounts do not protect data against someone who can modify the Windows account’s files. Custom named roles and template publication remain future features; this version supports the five predefined roles and individual capability overrides.
+Local mode has one authority. Phase 8 gives a separate LAN authority the same account and permission checks. App accounts do not protect data against someone who can modify the Windows account’s files. Custom named roles and template publication remain future features; this version supports the five predefined roles and individual capability overrides.
 
 ## 7. CG/render and acknowledgement architecture
 
@@ -84,15 +84,15 @@ Installer scaffolding, basic window recovery, diagnostic export and image-contai
 
 ## 9. Risks and explicit limits
 
-- Local account permissions are implemented. No network endpoint or shared multi-user service is enabled; Windows file access remains the outer trust boundary.
-- Desktop action sequences now execute in the local service and survive renderer reload. Application restart interrupts pending sequences without replay. Sports clocks now run in the local service, survive editor reload and pause on application restart; no multi-client network mode is enabled.
+- Local mode remains available. Optional production mode has pinned HTTPS, authenticated WebSocket snapshots, server accounts and session-based workspace leases. Windows file access remains the outer trust boundary.
+- Desktop action sequences now execute in the local service and survive renderer reload. Application restart interrupts pending sequences without replay. Sports clocks now run in the local service, survive editor reload and pause on application restart. Phase 8 enables optional multi-client production mode.
 - Native output uses Chromium/SVG and wall-clock timing. It is not a qualified broadcast output engine or an After Effects/Photoshop replacement.
 - Images embedded in `.broadcastproject` move with projects. Fonts, videos, arbitrary plugins, remote URLs and credentials do not. Missing local images block import/export. External dependencies are shown during import.
 - Recovery snapshots are debounced and bounded; a crash may lose the last fraction of a second of editing. Restoring a stale draft creates a copy instead of overwriting newer saved data. Program is intentionally not restored.
 - Current application preferences include identity, UI scale and startup; unimplemented integration/settings categories are not presented as working controls.
 - Installer is unsigned until a signing identity is supplied. Windows trust/signing and full Windows 10/11, mixed-DPI, touch and monitor-removal qualification are release tasks. No automatic updater or telemetry is installed.
 - The original hosted source remains for migration reference but is excluded from the desktop runtime. Existing remote projects are not silently downloaded or deleted. Import supported local exports explicitly.
-- SQLite schema v4 migrates earlier versions transactionally after consistent backups and rejects newer schemas. Downgrading in place is unsupported; keep the pre-upgrade backup.
+- SQLite schema v6 migrates earlier versions transactionally after consistent backups and rejects newer schemas. Downgrading in place is unsupported; keep the pre-upgrade backup.
 
 ## 10. Dependencies and release ownership
 
@@ -118,4 +118,6 @@ Phase 5 (0.5.0) adds the Sports workspace, monotonic local clocks, atomic bounde
 Phase 6 (0.6.0) adds local PSD inspection and import in a worker, comparative previews, editable supported point text, cached pixel layers, imported group hierarchy/opacity/visibility, font matching/substitution, persistent conversion reports and saved reference images. Scene/media insertion is transactional, permission-checked and revision-checked; import never publishes output. Schema 5 prevents older releases from stripping group metadata, with a consistent backup on upgrade from schema 4. See [PSD import guide](PSD-IMPORT.md) for the deliberately bounded conversion subset. After Effects conversion remains phase 7.
 
 
-Phase 7 (0.7.0) adds a local versioned `.bcae` interchange pipeline and bundled ExtendScript exporter, bounded inspection worker, sampled 2D animation, anchor/scale tracks and in/out timing, font matching, reference-frame attachment/comparison, persistent diagnostics, editable key times/values/interpolation and transactional imports. Existing data bindings and panel actions can operate converted scenes. Schema 6 blocks older serializers from stripping AE metadata and backs up schema-5 profiles first. See [AE conversion guide](AE-CONVERSION.md). Direct AEP opening, nested composition/vector/effect/plugin parity, video fallback and automatic AE rendering are not included. Unit, scripting-contract and native-runtime tests cover the local pipeline; the exporter still needs Adobe-hosted validation because AE is not installed here. Phase 8 remains LAN/multi-client production architecture.
+Phase 7 (0.7.0) adds a local versioned `.bcae` interchange pipeline and bundled ExtendScript exporter, bounded inspection worker, sampled 2D animation, anchor/scale tracks and in/out timing, font matching, reference-frame attachment/comparison, persistent diagnostics, editable key times/values/interpolation and transactional imports. Existing data bindings and panel actions can operate converted scenes. Schema 6 blocks older serializers from stripping AE metadata and backs up schema-5 profiles first. See [AE conversion guide](AE-CONVERSION.md). Direct AEP opening, nested composition/vector/effect/plugin parity, video fallback and automatic AE rendering are not included. Unit, scripting-contract and native-runtime tests cover the local pipeline; the exporter still needs Adobe-hosted validation because AE is not installed here. Phase 8 adds LAN/multi-client production; Adobe-host plugin qualification is deferred by user request.
+
+Phase 8 (0.8.0) implements saved pinned-HTTPS profiles, a separate bundled background host, authenticated WebSocket snapshots, synchronized clean editors, protected local drafts, server-owned counter deltas, optional workspace leases, single-workstation output attachment and exact-revision acknowledgements, encrypted server snapshots and manual backup switching. Schema remains 6. The suite has 112 tests; native QA covers real server/client processes, actual renderer acknowledgement, another operator and dirty-editor conflicts. A least-privilege SCM wrapper/installer is included but could not be registered without a Windows administrator token. Physical LAN/firewall, elevated service and long-running broadcast qualification remain open. See [LAN production](LAN-PRODUCTION.md) for setup and precise limits.

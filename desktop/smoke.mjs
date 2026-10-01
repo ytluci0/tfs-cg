@@ -8,6 +8,7 @@ import {aeSmoke} from './ae-smoke.mjs';
 import {psdSmoke} from './psd-smoke.mjs';
 import {sportsSmoke} from './sports-smoke.mjs';
 import {commandSmoke} from './command-smoke.mjs';
+import {networkSmoke} from './network-smoke.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await sleep(100);}throw Error('Renderer readiness timed out.');}
 export async function run({app,studio,dialog,openOutput,getOutput,service,directory}){
@@ -51,6 +52,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Audit history').click()");await sleep(200);await capture('accounts-audit.png');
  assert.equal((await api('/api/program',{projectId:p.id,scene:null,variables:{},mode:'hide'})).status,200);
  assert.deepEqual(errors,[]);checks.push('administration and audit render; console clean');
+ await networkSmoke({js,api,reload,capture,checks,sleep,until,getOutput,credentials});
  writeFileSync(join(directory,'smoke-result.json'),JSON.stringify({ok:true,checks,versions:process.versions,storage:service.diagnostics().database},null,2));
  studio.destroy();getOutput()?.destroy();app.quit();
 }
