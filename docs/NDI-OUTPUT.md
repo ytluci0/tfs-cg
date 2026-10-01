@@ -20,6 +20,13 @@ proprietary runtime. [NDI information and downloads](https://ndi.video/).
    receiver before Stop output** if the downstream graphic must be cleared;
    receivers can hold their last frame after a sender disconnects.
 
+**For 60 fps:** stop output if it is running, select **Broadcast output → Output
+adapter → Direct NDI output**, choose **1920 × 1080** (or 1280 × 720), set
+**Target frame rate → 60 fps**, then select **Start NDI output**. The existing
+0.11.0 installer already supports this setting; 50 fps is the initial preset.
+For OBS Browser Source, set both BroadcastCG's target and the OBS source's custom
+FPS to 60, and configure OBS's video output rate to match.
+
 For self-hosted production, connect the output PC to your server, start NDI there,
 then **Connections → Attach output on this PC**. Release the attachment before
 switching engines. Output configuration requires the same engineer permission as
@@ -85,6 +92,15 @@ The scene contains 32 animated shapes and a half-opacity reference rectangle.
 Discovery took approximately four seconds; that startup is excluded from the
 active receiver cadence calculation. These numbers describe this generated test,
 not a guarantee for every project or receiving application.
+
+The installed 0.11.0 application was also verified at **1920 × 1080, 60 fps** on
+1 October 2026 with the same generated scene. Over 60.006 seconds, the independent
+receiver decoded 3,361 frames after approximately four seconds of discovery,
+measured **60.000 fps** during reception and reported **zero receiver queue drops**.
+The renderer reported zero late callback intervals. Transparency, animated samples,
+Hide, receiver reconnect, empty restart and sender-failure handling all passed.
+The report is retained in `desktop/release/ndi-qualification-1080p60.json`.
+This verifies the existing 60 fps setting; no application reinstall is required.
 
 Implementation references: [NDI sender API](https://docs.ndi.video/all/developing-with-ndi/sdk/ndi-send),
 [frame formats and straight alpha](https://docs.ndi.video/all/developing-with-ndi/sdk/frame-types),
