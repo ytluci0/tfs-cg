@@ -49,11 +49,13 @@ The native process owns the SQLite connection in this phase. Documents and image
 
 Network commands carry command ID, workspace, actor/session, workstation, expected revision, target channel and ownership lease. The server validates permissions/ownership, applies atomic updates, records outcome, and broadcasts ordered events. Clients reconcile a snapshot plus event sequence after reconnect. Never blindly retry TAKE, CLEAR or macros after a lost response; query command outcome and actual engine state. Score increments are atomic commands, not whole-document last-write wins. Backups must use consistent database snapshots, not copies of a live SQLite WAL pair.
 
-## 6. Proposed authentication and authorization
+## 6. Local authentication and authorization — implemented in 0.2.0
 
-Phase 2 adds a first-run local administrator setup, no default shared password, username/password login, disabled accounts, change/reset password and revocable sessions. Password verification stays in the authority process. Use a reviewed password-hashing implementation (Argon2id, or appropriately configured scrypt if avoiding a native dependency), per-password salts, work-factor upgrades and rate limiting. Store only session-token hashes server-side; protected remembered-session tokens belong in Windows credential storage, not renderer localStorage. Offline password reset is an authenticated administrator operation or an explicit documented recovery procedure, not a fake email link.
+Phase 2 implements local administrator setup, password login/logout, disabled users, temporary-password change/reset, five roles with per-user permission overrides, workspace grants, revocable sessions and actor-attributed audit history. Password verification uses Node scrypt with independent salts. Access tokens stay in Electron main; only token hashes are stored in SQLite. Optional remembered sign-in is DPAPI protected on disk. No renderer localStorage token or cloud identity is used.
 
-Model users, roles, permissions, role-permission links, user roles, workspace grants and sessions separately. Seed ADMIN, DESIGNER, OPERATOR, ENGINEER and VIEWER. Enforce permissions on every command/service endpoint, not merely by hiding UI controls. Sessions include workstation identity, issue/expiry time and revocation; role changes and disabling accounts revoke affected sessions. Custom roles use the same permission table. Workspace access intersects with capability grants. Local Windows file access is the trust boundary in phase 1; application login is **not implemented in this release**.
+Permission checks protect project changes, exposed operator fields, source endpoints/credentials, images, import/export, recovery, output commands and native settings. A dedicated output session has a main-process-only read capability for the active program and its media. Logout and session expiry lock controls without clearing output. See [account behavior, roles and limits](LOCAL-ACCOUNTS.md).
+
+This is one local authority, not a shared LAN server. App accounts do not protect data against someone who can modify the Windows account’s files. Custom named roles and template publication remain future features; this version supports the five predefined roles and individual capability overrides.
 
 ## 7. CG/render and acknowledgement architecture
 
@@ -82,7 +84,7 @@ Installer scaffolding, basic window recovery, diagnostic export and image-contai
 
 ## 9. Risks and explicit limits
 
-- No accounts/RBAC yet. Do not deploy this foundation to untrusted operators or a shared network endpoint.
+- Local account permissions are implemented. No network endpoint or shared multi-user service is enabled; Windows file access remains the outer trust boundary.
 - Existing clock and action loops still live in React; they do not yet survive closing the app or synchronize across PCs. No multi-client network mode is enabled.
 - Native output uses Chromium/SVG and wall-clock timing. It is not a qualified broadcast output engine or an After Effects/Photoshop replacement.
 - Images embedded in `.broadcastproject` move with projects. Fonts, videos, arbitrary plugins, remote URLs and credentials do not. Missing local images block import/export. External dependencies are shown during import.
@@ -90,16 +92,18 @@ Installer scaffolding, basic window recovery, diagnostic export and image-contai
 - Current application preferences include identity, UI scale and startup; unimplemented integration/settings categories are not presented as working controls.
 - Installer is unsigned until a signing identity is supplied. Windows trust/signing and full Windows 10/11, mixed-DPI, touch and monitor-removal qualification are release tasks. No automatic updater or telemetry is installed.
 - The original hosted source remains for migration reference but is excluded from the desktop runtime. Existing remote projects are not silently downloaded or deleted. Import supported local exports explicitly.
-- SQLite schema v1 rejects databases from a newer app. Every future schema change needs a tested transactional migration and pre-migration backup; downgrade compatibility is not assumed.
+- SQLite schema v2 migrates v1 transactionally after a consistent backup and rejects newer schemas. Downgrading in place is unsupported; keep the pre-upgrade backup.
 
 ## 10. Dependencies and release ownership
 
 Development uses the existing React/TypeScript/Vite toolchain plus pinned Electron 44.5.1 and electron-builder 26.15.3. Node's bundled SQLite avoids requiring an end-user database installation or a separate native SQLite module. Build tooling downloads Electron and NSIS on the developer workstation; the generated offline installer carries the complete runtime. The packaged app contains no Cloudflare/ChatGPT SDK, server or authentication dependency.
 
-Future production dependencies are a signing identity, optional self-hosted Windows service/PostgreSQL installation, approved password-hashing library, required fonts/media licenses, chosen CG/output SDKs and documented integration endpoints. These choices should be qualified individually, not replaced with decorative buttons.
+Future production dependencies are a signing identity, optional self-hosted Windows service/PostgreSQL installation, required fonts/media licenses, chosen CG/output SDKs and documented integration endpoints. These choices should be qualified individually, not replaced with decorative buttons.
 
-## Foundation verification
+## Verification
 
 Automated tests cover local persistence across reopen, stale revision rejection, unavailable/unacknowledged output, concurrent command rejection, recovery conflicts, image package round-trip/remapping, missing media validation, protected credential requirements and monitor-bound restoration, alongside the existing design/panel/formation/action tests.
 
 The real Electron smoke test runs an isolated data profile, loads the bundled renderer, checks Node globals are absent, saves/reads a local project, verifies offline TAKE rejection, opens the native output, waits for an actual renderer acknowledgement, verifies the output SVG and hides it. Packaged Windows UI checks verify the design workspace, panel builder, tool library and settings. Installer creation is verified; a full clean-machine install/upgrade/uninstall and hardware matrix is deferred to phase 9/10.
+
+Phase 2 adds 12 security tests (35 total automated tests), including role/workspace denials, password changes and resets, disabled users, token rotation/revocation, idle/absolute expiry, endpoint credential isolation and v1 migration. Native Electron tests verify first-run setup, main-only tokens, temporary-password enforcement, Viewer write/settings denials, logout with continuing output, and the read-only output partition. UI screenshots are inspected during QA.

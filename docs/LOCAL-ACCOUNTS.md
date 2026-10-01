@@ -1,0 +1,39 @@
+# Local accounts — BroadcastCG 0.2.0
+
+On first launch, create an administrator username and a 15–128-character password or passphrase. No default account, online identity or email service is used. Existing phase-1 projects stay in the local database and are accessible to the first administrator.
+
+Open **Accounts & access → Users → Add user**. Assign a role, choose saved workspaces (or all current and future workspaces), and enter a temporary password. Give that password to the intended operator through your normal trusted channel. The app requires them to change it before accessing projects. Click your own name in the top strip to change your password; an administrator can reset another user's password or disable their account. Keep access to an administrator account: this release has no email recovery or unauthenticated password-reset backdoor.
+
+## Default capabilities
+
+| Role | Default access |
+| --- | --- |
+| Admin | All workspaces, design, operation, output, accounts and system configuration |
+| Designer | Design/animation, panel building, data configuration, import/export and control operation; no TAKE/update/hide permission |
+| Operator | Assigned projects, exposed control values, rosters, data refresh, TAKE/update/hide; no design or panel layout changes |
+| Engineer | Assigned projects, data configuration, feed credentials, output/display settings, system settings, audit and diagnostics; no TAKE |
+| Viewer | Read assigned projects and monitor output; no project or output commands |
+
+**Individual permissions** override role defaults. Denials win over grants. Administrator permissions cannot be restricted; use another role for a restricted account. User-management permission grants authority over all local accounts, including role assignment. Workspace access still applies to project operations. Creating a workspace automatically grants its creator access. Projects are the workspace boundary in this version. Custom named roles, approval-based template publishing and shared LAN users are not implemented; publication permission is visibly marked reserved.
+
+Operator fields come from saved controls, their variable actions, data bindings and football components. An operator may update those values while preserving their types. The service checks the entire submitted project: posting a modified scene layout or panel definition directly does not bypass role restrictions. A program scene must match a saved graphic. Changing an API endpoint removes its stored request headers; configure credentials again for the new endpoint.
+
+## Sessions and output
+
+Sessions expire after 30 minutes without user input or after 12 hours total. Background status/data polling does not keep them active. **Remember me** stores an encrypted, rotating sign-in token for 30 days in the current Windows account; restarting the app can use it to create a new session. Signing out removes that remembered sign-in. Password changes, password resets, access edits, disabling a user and session revocation invalidate affected sessions and remembered tokens. Revocation is immediate at the service; the screen locks on its next request or within the five-second status poll.
+
+**Accounts & access → Sessions** lists active local sessions and lets an administrator revoke them. Logout and expiry leave the current output graphic on screen. Delayed operator sequences stop when their workspace unmounts. Running panel clocks are still editor-side; they stop at logout. Closing the application closes output; reopening starts off air and never replays TAKE commands.
+
+Unsaved recovery drafts belong to individual users. They are saved after a short debounce, and sign-out attempts to flush the latest draft. A recovery conflict can be opened as a new project only when the user has permission to create one. Program is independent of draft recovery. This is not a shared production service or an authoritative multi-operator clock.
+
+## Audit and storage
+
+Audit history can be filtered by username, action, workstation, workspace ID and local date/time. It shows the newest 500 matching events: sign-ins, failures, account/session changes, permission denials, project/graphic/panel changes, exposed variable before/after values, data fetches and acknowledged/unconfirmed output commands. Passwords, session tokens and request-header values are excluded. Graphic/panel events identify the affected item and its old/new name, not a full version history. The audit is local SQLite history, not a tamper-evident external log.
+
+The service uses Node scrypt with N=131072, r=8, p=1, a random 16-byte salt and a 64-byte derived key. Password verification uses constant-time comparison. Only hashed session and remembered tokens are stored in the database. Raw access tokens stay in Electron main; the renderer receives safe session metadata. Windows DPAPI protects remembered sign-in and feed credentials on disk. Failed sign-ins have per-account and workstation-wide limits. This configuration follows the [OWASP password-storage guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html).
+
+The dedicated output partition can only read the current program and its local media. It cannot access accounts, other projects, settings or write endpoints. No listening HTTP server, cloud authentication or hosted runtime is used.
+
+Data is in `%APPDATA%\BroadcastCG\data`. Upgrading schema 1 to schema 2 first makes a consistent SQLite backup under `backups`, then adds account/grant/session tables in a transaction. Unknown newer schema versions are rejected. In-place downgrade is unsupported. To restore a pre-upgrade backup, close the app and retain the entire current data directory before any manual restore; do not replace a live database or its WAL files.
+
+Application permissions do not defend against someone who can edit the Windows profile, database or application binaries. Use separate Windows accounts and appropriate filesystem access for that boundary. This release does not claim full-disk encryption, tamper-proof auditing, signed binaries or broadcast-hardware qualification.

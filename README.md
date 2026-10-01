@@ -2,22 +2,24 @@
 
 BroadcastCG has a local Electron desktop build using the existing graphics editor, animation tools, panel builder and sports/esports controls. It runs without ChatGPT, Cloudflare, a browser, a localhost web server or an internet connection. External feeds/images require a connection only when configured by the operator.
 
-This is **phase 1: desktop foundation**, not a production-qualified broadcast system. Local username/password login, RBAC, multi-operator networking, PSD/AE import, SDI/NDI and hardware integration are not implemented yet. See [architecture and phased plan](docs/DESKTOP-ARCHITECTURE.md).
+Version **0.2.0 completes phase 2: local accounts and permissions**. It adds administrator setup, sign-in, user management, role/permission overrides, workspace assignments, session revocation and audit history. Multi-operator networking, PSD/AE import, SDI/NDI and hardware integration remain later phases. See [architecture and phased plan](docs/DESKTOP-ARCHITECTURE.md).
 
 ## Windows release
 
-The build produces `desktop/release/BroadcastCG-Setup-x64.exe`. Run the installer, then open **BroadcastCG** from the Windows Start menu. Node.js, a database and development tools are not required on the receiving PC. The initial build is unsigned.
+The build produces `desktop/release/BroadcastCG-Setup-x64.exe`. Run the installer, then open **BroadcastCG** from the Windows Start menu. Node.js, a database and development tools are not required on the receiving PC. This build is unsigned.
 
 The assisted installer supports installation-directory selection, Start menu integration and uninstall. Project data remains outside the installation in `%APPDATA%\BroadcastCG\data` and is preserved on uninstall. A normal reinstall must not remove that directory. Automatic updates are disabled.
 
+- **First launch:** create your own administrator username and passphrase (15–128 characters). There is no default password.
+- **Accounts & access:** add local users, assign workspaces and roles, reset passwords, revoke sessions and filter audit history. Newly created users must change their temporary password. Click your name to change your own password.
 - **Design / Animate:** use the existing layer editor and keyframes; drop PNG/JPEG/WebP files from Explorer onto the design canvas.
 - **Panels:** open Tool library for sports/esports presets, or use individual controls and Formation studio.
 - **Open output:** opens a native graphics window. Use the Output menu to select a monitor and F11 for fullscreen. TAKE requires this output to be available and acknowledge the scene update.
 - **Export / Import:** native Windows dialogs read/write `.broadcastproject`, including local images. Previous `.frame.json` projects can be imported if their referenced images are available. Missing local media blocks import; external dependencies are reported.
-- **System & settings:** workstation identity, UI scale, Windows startup, display selection, measured local status and diagnostic export.
-- **Recovery:** an unsaved draft is offered on restart where available. Conflicting drafts become separate projects. Program always starts off air; commands are never replayed.
+- **System:** workstation identity, UI scale, Windows startup, display selection, measured local status and diagnostic export.
+- **Recovery:** an unsaved draft is offered on restart where available. Users with workspace-creation permission can recover conflicting drafts as separate projects. Program always starts off air; commands are never replayed.
 
-All working projects and assets are local. The app does not automatically download projects from the former hosted site. API headers are encrypted with Windows DPAPI and excluded from exports. Do not copy a live SQLite file to make a backup; use project export in this foundation release.
+All working projects and assets are local. The app does not automatically download projects from the former hosted site. API headers are encrypted with Windows DPAPI and excluded from exports. Upgrading from phase 1 makes a consistent database backup in the data folder’s `backups` directory before adding account tables. Existing projects and media remain local; the first administrator can access them. Do not copy a live SQLite file for manual backup; use project export or close the application first. Read [local account and security details](docs/LOCAL-ACCOUNTS.md).
 
 ## Development
 
@@ -40,7 +42,7 @@ Electron 44 requires its explicit binary-install command shown above. The deskto
 node node_modules/typescript/bin/tsc --noEmit
 node --experimental-strip-types --test tests/*.test.mjs
 
-# Real Electron runtime test; uses desktop/.cache/smoke-profile
+# Real Electron runtime test; uses a unique desktop/.cache/smoke-profile-*
 node desktop/run.mjs --smoke-test
 
 # Build the installer (also rebuilds the local application)
@@ -60,7 +62,8 @@ The application build uses Vite to bundle React, esbuild for the local service, 
 - `lib/studio-model.ts` — validated project/scene/control models and type-safe actions.
 - `desktop/main.cjs`, `preload.cjs` — native host, internal protocol, dialogs, output acknowledgements and OS integration.
 - `desktop/local-service.mjs` — local SQLite persistence, recovery, image package transfer and data fetching.
-- `desktop/renderer.tsx` — desktop entry and system/settings UI.
+- `desktop/renderer.tsx`, `accounts.tsx` — login, user administration, audit and system UI.
+- `desktop/security.mjs`, `project-policy.mjs`, `lib/permissions.ts` — account authority, migration and capability checks.
 - `desktop/electron-builder.json` — offline Windows installer configuration.
 - `tests/desktop-service.test.mjs`, `desktop/smoke.mjs` — persistence/safety and actual-runtime verification.
 

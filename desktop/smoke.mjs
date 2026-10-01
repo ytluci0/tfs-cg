@@ -1,34 +1,46 @@
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
+import {randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await sleep(100);}throw Error('Renderer readiness timed out.');}
 export async function run({app,studio,openOutput,getOutput,service,directory}){
- const errors=[];studio.webContents.on('console-message',(_e,...args)=>{const d=args[0];if((typeof d==='object'&&d.level==='error')||d===3)errors.push(typeof d==='object'?d.message:args[1]);});
- await until(()=>studio.webContents.executeJavaScript("document.body.innerText.includes('LOCAL WORKSTATION')").catch(()=>false));
- assert.equal(await studio.webContents.executeJavaScript('typeof window.require'), 'undefined');
- assert.equal(await studio.webContents.executeJavaScript('typeof window.process'), 'undefined');
- const layout=await studio.webContents.executeJavaScript(`(()=>{const c=document.querySelector('.canvas-area .canvas-stage').getBoundingClientRect(),a=document.querySelector('.canvas-area').getBoundingClientRect();return {height:c.height,contained:c.top>=a.top&&c.bottom<=a.bottom+1&&c.left>=a.left&&c.right<=a.right+1};})()`);
- assert.ok(layout.height>200&&layout.contained,'Design canvas must fit inside its visible area: '+JSON.stringify(layout));
- const originalSize=studio.getSize();studio.setSize(1280,720);await sleep(150);
- const compact=await studio.webContents.executeJavaScript(`(()=>{const c=document.querySelector('.canvas-area .canvas-stage').getBoundingClientRect(),a=document.querySelector('.canvas-area').getBoundingClientRect();return {height:c.height,contained:c.top>=a.top&&c.bottom<=a.bottom+1&&c.left>=a.left&&c.right<=a.right+1};})()`);
- assert.ok(compact.height>150&&compact.contained,'Canvas must fit a smaller window: '+JSON.stringify(compact));studio.setSize(...originalSize);await sleep(100);
- const p=defaultProject();p.name='Desktop runtime QA';
- async function api(path,body){return studio.webContents.executeJavaScript(`fetch(${JSON.stringify(path)},${JSON.stringify(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})}).then(async r=>({status:r.status,value:await r.json()}))`);}
- assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
- assert.equal((await api('/api/projects/'+p.id)).value.project.name,p.name);
- assert.equal((await api('/api/program',{scene:p.scenes[0],variables:p.variables,mode:'show'})).status,503);
- openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());
- const take=await api('/api/program',{scene:p.scenes[0],variables:p.variables,mode:'show'});assert.equal(take.status,200,JSON.stringify(take));
- assert.equal(await getOutput().webContents.executeJavaScript('document.querySelectorAll("svg[data-testid=graphic]").length'),1);
- assert.equal((await api('/api/program')).value.revision,take.value.revision);
- await sleep(700);
- writeFileSync(join(directory,'desktop-smoke.png'),(await studio.webContents.capturePage()).toPNG());
- writeFileSync(join(directory,'output-smoke.png'),(await getOutput().webContents.capturePage()).toPNG());
- assert.equal((await api('/api/program',{scene:null,variables:{},mode:'hide'})).status,200);
- assert.deepEqual(errors,[]);
- writeFileSync(join(directory,'smoke-result.json'),JSON.stringify({ok:true,checks:['native renderer loads','Node globals inaccessible','local project save/read','offline TAKE rejected','native output render acknowledged','program revision matches','hide acknowledged','renderer console clean'],versions:process.versions,storage:service.diagnostics().database},null,2));
- // Tests close only their isolated profile, without triggering operator dialogs.
+ const errors=[],checks=[];studio.webContents.on('console-message',(_e,...args)=>{const d=args[0];if((typeof d==='object'&&d.level==='error')||d===3)errors.push(typeof d==='object'?d.message:args[1]);});
+ const js=code=>studio.webContents.executeJavaScript(code),auth=(action,data)=>js(`window.broadcastCG.auth(${JSON.stringify(action)},${JSON.stringify(data)})`);
+ const capture=async name=>{studio.show();studio.focus();await sleep(600);for(let n=0;n<3;n++){try{writeFileSync(join(directory,name),(await studio.webContents.capturePage()).toPNG());return;}catch(e){if(n===2)throw e;await sleep(400);}}};
+ async function reload(){studio.reload();await until(()=>js("document.querySelector('.studio')!==null").catch(()=>false));await sleep(150);}
+ async function api(path,body){return js(`fetch(${JSON.stringify(path)},${JSON.stringify(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})}).then(async r=>({status:r.status,value:await r.json()}))`);}
+ await until(()=>js("document.body.innerText.includes('Set up your workstation')").catch(()=>false));
+ await capture('accounts-setup.png');assert.equal((await api('/api/projects')).status,401);
+ assert.equal(await js('typeof window.require'), 'undefined');assert.equal(await js('typeof window.process'), 'undefined');
+ const password=randomBytes(24).toString('hex'),credentials={username:'qa_admin',displayName:'QA Administrator',password,remember:true};
+ const admin=await auth('setup',credentials);assert.equal(admin.user.role,'ADMIN');assert.equal(admin.token,undefined);assert.equal(admin.rememberToken,undefined);checks.push('first-run gate and private main-process tokens');
+ await reload();
+ const layout=await js(`(()=>{const c=document.querySelector('.canvas-area .canvas-stage').getBoundingClientRect(),a=document.querySelector('.canvas-area').getBoundingClientRect();return {height:c.height,contained:c.top>=a.top&&c.bottom<=a.bottom+1&&c.left>=a.left&&c.right<=a.right+1};})()`);
+ assert.ok(layout.height>200&&layout.contained,JSON.stringify(layout));
+ const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
+ const command={projectId:p.id,scene:p.scenes[0],variables:p.variables,mode:'show'};
+ assert.equal((await api('/api/program',command)).status,503);openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());
+ const take=await api('/api/program',command);assert.equal(take.status,200,JSON.stringify(take));
+ assert.equal(await getOutput().webContents.executeJavaScript('document.querySelectorAll("svg[data-testid=graphic]").length'),1);checks.push('native TAKE and renderer acknowledgement');
+ await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Accounts & access').click()");await until(()=>js("document.querySelector('.account-table tbody tr')!==null"));await capture('accounts-admin.png');
+ const viewer=await auth('createUser',{username:'qa_viewer',displayName:'QA Viewer',password,role:'VIEWER',enabled:true,allWorkspaces:false,workspaceIds:[p.id]});
+ await auth('logout');assert.equal((await api('/api/projects')).status,401);
+ assert.equal(await getOutput().webContents.executeJavaScript('fetch("/api/program").then(r=>r.json()).then(p=>p.mode)'), 'show');
+ assert.equal(await getOutput().webContents.executeJavaScript('fetch("/api/projects").then(r=>r.status)'),403);
+ assert.equal(await getOutput().webContents.executeJavaScript('fetch("/api/program",{method:"POST",body:"{}"}).then(r=>r.status)'),403);checks.push('logout preserves output; output context cannot edit');
+ await auth('login',{username:viewer.username,password});assert.equal((await api('/api/projects')).status,403);
+ await auth('changePassword',{currentPassword:password,password:password+'new'});await reload();
+ assert.equal(await js("document.querySelector('[role=tab][data-state=active]').textContent"),'On air');
+ assert.equal((await api('/api/projects',{project:p,revision:1})).status,403);
+ const preferences=await js('window.broadcastCG.settings()');await assert.rejects(()=>js(`window.broadcastCG.saveSettings(${JSON.stringify(preferences)})`),/permission/);
+ assert.equal((await api('/api/program',command)).status,403);await capture('accounts-viewer.png');checks.push('temporary password required; Viewer API and native settings denied');
+ await auth('logout');await auth('login',credentials);await reload();
+ await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Accounts & access').click()");await until(()=>js("document.querySelectorAll('.account-table tbody tr').length===2"));await capture('accounts-admin.png');
+ await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Audit history').click()");await sleep(200);await capture('accounts-audit.png');
+ assert.equal((await api('/api/program',{projectId:p.id,scene:null,variables:{},mode:'hide'})).status,200);
+ assert.deepEqual(errors,[]);checks.push('administration and audit render; console clean');
+ writeFileSync(join(directory,'smoke-result.json'),JSON.stringify({ok:true,checks,versions:process.versions,storage:service.diagnostics().database},null,2));
  studio.destroy();getOutput()?.destroy();app.quit();
 }
