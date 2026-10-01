@@ -17,3 +17,5 @@ Version 0.13 adds responsive graphic layouts, API row templates, linked graphic 
 PSD import in 0.13.1 supports source files up to 2 GB, with memory preflight, a 1 GB declared pixel budget, a three-minute cancellable inspection, and readable error messages. See [PSD import](docs/PSD-IMPORT.md).
 
 Version **0.14.0** adds expandable property tracks in Animate: stopwatch/key controls, inline values, multi-track key dragging, copy/paste, easing curves, frame snapping, zoom and timeline resizing. See the [animation timeline guide](docs/ANIMATION-TIMELINE.md).
+
+Version **0.15.0** adds a dockable Design workspace: movable/resizable Scenes, Layers and Properties panels; mouse-wheel zoom and panning; direct shape, text, line and polygon drawing; layer search, lock, rename, grouping and ordering; and editable shape/brush masks with feather, density and inversion. Masks render in PNG exports and broadcast output. See the [Design workspace guide](docs/DESIGN-WORKSPACE.md).

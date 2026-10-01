@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
 import {productionSmoke} from './production-smoke.mjs';
 import {timelineSmoke} from './timeline-smoke.mjs';
+import {designSmoke} from './design-smoke.mjs';
 import {creativeSmoke} from './creative-smoke.mjs';
 import {panelSmoke} from './panel-smoke.mjs';
 import {aeSmoke} from './ae-smoke.mjs';
@@ -35,6 +36,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await timelineSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
+ await designSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
  await productionSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
  const command={projectId:p.id,scene:p.scenes[0],variables:p.variables,mode:'show'};
  assert.equal((await api('/api/program',command)).status,503);openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());

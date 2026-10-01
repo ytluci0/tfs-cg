@@ -5,7 +5,7 @@ export function projectDependencies(project){
  return{fonts:[...new Set(project.scenes.flatMap(s=>s.layers.filter(l=>l.type==='text').map(l=>l.fontFamily)))].sort(),external:[...new Set([...JSON.stringify(project).matchAll(/https?:\/\/[^"\s]+/g)].map(m=>m[0]))].sort(),credentials:'Configure on the destination; not included',embeddedMedia:['PNG','JPEG','WebP','MP4','WebM']};
 }
 export function createProjectPackage(project,assets){
- const document={format:'broadcastcg-package',version:1,application:'BroadcastCG',minimumVersion:'0.13.0',project,assets,manifest:{projectSha256:sha(JSON.stringify(project)),assets:assets.map(a=>({id:a.id,name:a.name,mime:a.mime,size:Buffer.from(a.bytes,'base64').length,sha256:sha(Buffer.from(a.bytes,'base64'))})),dependencies:projectDependencies(project)}};
+ const document={format:'broadcastcg-package',version:1,application:'BroadcastCG',minimumVersion:'0.15.0',project,assets,manifest:{projectSha256:sha(JSON.stringify(project)),assets:assets.map(a=>({id:a.id,name:a.name,mime:a.mime,size:Buffer.from(a.bytes,'base64').length,sha256:sha(Buffer.from(a.bytes,'base64'))})),dependencies:projectDependencies(project)}};
  return document;
 }
 export function unpackProjectPackage(data){

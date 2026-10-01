@@ -1,4 +1,5 @@
 import {z} from 'zod';
+import {layerMaskSchema} from './design-schema.ts';
 
 export const bezierSchema=z.tuple([z.number().min(0).max(1),z.number().min(-2).max(3),z.number().min(0).max(1),z.number().min(-2).max(3)]);
 export const appearanceSchema=z.object({
@@ -8,6 +9,7 @@ export const appearanceSchema=z.object({
  icon:z.string().max(16).optional(),image:z.string().max(2000).optional(),label:z.string().max(100).optional(),
 });
 export const visualSchema=z.object({
+ layerMask:layerMaskSchema.optional(),
  blend:z.enum(['normal','multiply','screen','overlay','darken','lighten','difference','exclusion']).optional(),clipLayer:z.string().max(100).optional(),gradientStops:z.array(z.object({offset:z.number().min(0).max(1),color:z.string().max(100)})).min(2).max(12).optional(),
  fill:z.enum(['solid','linear','radial','none']).optional(),gradientColor:z.string().max(100).optional(),gradientAngle:z.number().min(-360).max(360).optional(),
  stroke:z.string().max(100).optional(),strokeWidth:z.number().min(0).max(100).optional(),

@@ -1,5 +1,6 @@
 'use client';
 import React from 'react';
+import {LayerMaskDefinition} from './layer-mask';
 import {expandRows,resolveLayout,vectorPath,groupTransform} from '@/lib/production-tools';
 import {VideoLayer} from './media-layer';
 import {sceneTree,type SceneNode} from '@/lib/psd-model';
@@ -32,13 +33,14 @@ export function Graphic({scene:sourceScene,time=2,elapsed=time,variables={},sele
   const radians=(v.gradientAngle||0)*Math.PI/180,size=fittedSize(l,text),points=v.points||[{x:0,y:1},{x:.5,y:0},{x:1,y:1}],src=textValue(l.src,variables),zoom=v.cropZoom||1;
   return <g key={l.id} clipPath={v.clipLayer?`url(#${id}-clip-${v.clipLayer})`:undefined} style={{mixBlendMode:v.blend||'normal'}}><g data-layer-id={l.id} transform={layerTransform(l)} style={{cursor:onSelect&&!l.locked?'move':undefined}} onPointerDown={e=>{if(!onSelect||l.locked)return;e.stopPropagation();onSelect(l.id.split('~')[0],e.shiftKey||e.ctrlKey||e.metaKey);if(onDrag&&!e.shiftKey&&!e.ctrlKey&&!e.metaKey){e.currentTarget.ownerSVGElement?.setPointerCapture(e.pointerId);const original=sourceScene.layers.find(v=>v.id===l.id.split('~')[0])||l;const matrix=(e.currentTarget.parentElement!.parentElement as unknown as SVGGraphicsElement).getScreenCTM()!.inverse();drag.current={id:original.id,x:original.x,y:original.y,px:e.clientX,py:e.clientY,matrix};}}}>
    <defs>
+    {v.layerMask?.enabled&&<LayerMaskDefinition mask={v.layerMask} width={l.width} height={l.height} id={ref+'-layer-mask'}/>}
     {v.fill==='linear'&&<linearGradient id={ref+'-fill'} x1={.5-Math.cos(radians)/2} y1={.5-Math.sin(radians)/2} x2={.5+Math.cos(radians)/2} y2={.5+Math.sin(radians)/2}>{stops.map((s,i)=><stop key={i} offset={s.offset} stopColor={textValue(s.color,variables)}/>)}</linearGradient>}
     {v.fill==='radial'&&<radialGradient id={ref+'-fill'}>{stops.map((s,i)=><stop key={i} offset={s.offset} stopColor={textValue(s.color,variables)}/>)}</radialGradient>}
     {filter&&<filter id={ref+'-fx'} x="-100%" y="-100%" width="300%" height="300%" colorInterpolationFilters="sRGB">{v.blur?<feGaussianBlur stdDeviation={v.blur}/>:null}{v.glow?<feDropShadow dx="0" dy="0" stdDeviation={v.glow} floodColor={textValue(v.glowColor||color,variables)} floodOpacity="1"/>:null}{l.shadow&&<feDropShadow dx={v.shadowX??0} dy={v.shadowY??10} stdDeviation={v.shadowBlur??15} floodColor={textValue(v.shadowColor||'#000000',variables)} floodOpacity=".6"/>}</filter>}
     <clipPath id={ref+'-mask'}>{v.mask==='ellipse'?<ellipse cx={l.width/2} cy={l.height/2} rx={l.width/2} ry={l.height/2}/>:<rect width={l.width} height={l.height} rx={v.mask==='rounded'?l.radius||24:0}/>}</clipPath>
     {l.type==='arrow'&&<marker id={ref+'-arrow'} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill={textValue(v.stroke||color,variables)}/></marker>}
    </defs>
-   <g opacity={Math.max(0,Math.min(1,l.opacity))} filter={filter?`url(#${ref}-fx)`:undefined}>
+   <g opacity={Math.max(0,Math.min(1,l.opacity))} filter={filter?`url(#${ref}-fx)`:undefined} mask={v.layerMask?.enabled?`url(#${ref}-layer-mask)`:undefined}>
     {l.type==='rect'&&<rect width={l.width} height={l.height} rx={l.radius} {...paint}/>}
     {l.type==='ellipse'&&<ellipse cx={l.width/2} cy={l.height/2} rx={l.width/2} ry={l.height/2} {...paint}/>}
     {(l.type==='line'||l.type==='arrow')&&<line x1="0" y1={l.height/2} x2={l.width} y2={l.height/2} stroke={textValue(v.stroke||color,variables)} strokeWidth={v.strokeWidth||6} markerEnd={l.type==='arrow'?`url(#${ref}-arrow)`:undefined}/>}
