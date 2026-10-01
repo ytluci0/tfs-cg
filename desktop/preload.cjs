@@ -1,6 +1,7 @@
 const {contextBridge,ipcRenderer}=require('electron');
 const call=(name,...args)=>ipcRenderer.invoke('broadcastcg:'+name,...args);
 contextBridge.exposeInMainWorld('broadcastCG',Object.freeze({
+  broadcastOutput:(action,data)=>call('broadcastOutput',action,data),
   editorState:(section,projectId,value)=>call('editorState',section,projectId,value),
   recovery:(action,data)=>call('recovery',action,data),
   network:(action,data)=>call('network',action,data),

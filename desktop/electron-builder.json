@@ -21,7 +21,8 @@
     "assets/NETWORK-LICENSES.txt",
     "package.json",
     "assets/Install-ManagedClient.ps1",
-    "editor-state.cjs"
+    "editor-state.cjs",
+    "output-controller.cjs"
   ],
   "asar": true,
   "extraResources": [

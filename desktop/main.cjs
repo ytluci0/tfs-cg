@@ -6,6 +6,9 @@ const {createPsdSessions}=require('./psd-session.cjs');
 const {createAeSessions}=require('./ae-session.cjs');
 const {restoreBounds}=require('./window-state.cjs');
 const {createEditorState}=require('./editor-state.cjs');
+const {createOutputController}=require('./output-controller.cjs');
+const {outputConfig}=require('./app/output-config.cjs');
+const {connectObs}=require('./app/obs-client.cjs');
 const {createLocalService,ServiceError}=require('./app/service.cjs');
 const {createRemoteAuthority,serverProfile,provisionServer,loadServer,restoreServer,managedPolicy,readManagedPolicy,commitRestore,completeRestore,recoverInterruptedRestore,inspectBackup}=require('./app/network-runtime.cjs');
 const {randomUUID,createHash}=require('node:crypto');
@@ -19,6 +22,7 @@ const dataDirectory=join(app.getPath('userData'),'data');
 protocol.registerSchemesAsPrivileged([{scheme:'broadcastcg',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 let studio,output,service,quitting=false,logPath,outputReady=false,lastOutputAck=null,outputUnconfirmed=false,powerBlock;
 let currentToken=null,psdSessions,aeSessions,localService,remote=null,managed=null,maintenance=false;
+let broadcastOutput,outputMode='desktop',obs=null,obsBusy=false;
 const profiles=()=>managed?.profiles||localService.settings.get('serverProfiles',[]);
 let rememberFile=join(dataDirectory,'remembered-login.bin');
 const hostDirectory=join(app.getPath('userData'),'production-server');
@@ -56,9 +60,10 @@ async function handleRequest(request,outputRead=false){
   if(!rel||rel.startsWith('..')||isAbsolute(rel))return new Response('Forbidden',{status:403});
   try{const bytes=await fs.promises.readFile(target);return new Response(request.method==='HEAD'?null:bytes,{headers:{'Content-Type':mime[extname(target)]||'application/octet-stream','Content-Security-Policy':csp,'X-Content-Type-Options':'nosniff','Cache-Control':'no-store'}});}catch{return new Response('Not found',{status:404});}
 }
-function beforePublish(){if(!output||output.isDestroyed()||!outputReady)throw new ServiceError('Desktop output is offline. Open the output window before TAKE.',503);}
+function beforePublish(){if(outputMode==='browser'){if(!broadcastOutput?.info().status.ready)throw new ServiceError('Browser output is offline. Start it and load its URL in OBS before TAKE.',503);return;}if(!output||output.isDestroyed()||!outputReady)throw new ServiceError('Desktop output is offline. Open the output window before TAKE.',503);}
 function confirmProgram(program){
   outputUnconfirmed=true;
+  if(outputMode==='browser'){if(outputReady)output.webContents.send('broadcastcg:program',program);return broadcastOutput.publish(program).then(()=>{outputUnconfirmed=false;lastOutputAck=program.revision;}).catch(e=>{throw new ServiceError(e.message,504);});}
   return new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>{pending.delete(program.revision);log('OUTPUT_ACK_TIMEOUT','failed');reject(new ServiceError('Output acknowledgement timed out. Output state is unconfirmed; inspect the output before issuing another command.',504));},3000);
     pending.set(program.revision,{resolve:()=>{clearTimeout(timer);outputUnconfirmed=false;lastOutputAck=program.revision;resolve();},reject});
@@ -90,16 +95,17 @@ function openOutput(displayId){
   if(output&&!output.isDestroyed()){if(Number.isInteger(displayId)){const d=screen.getAllDisplays().find(d=>d.id===displayId);if(d){output.setFullScreen(false);output.setBounds(d.workArea);}}output.show();output.focus();return;}
   outputReady=false;output=createWindow('output',displayId);
   output.webContents.once('did-finish-load',()=>{outputReady=true;log('OUTPUT_OPEN');});
-  output.on('closed',()=>{remote?.releaseOutput();output=null;outputReady=false;outputUnconfirmed=true;log('OUTPUT_CLOSED');});
+  output.on('closed',()=>{if(outputMode==='desktop')remote?.releaseOutput();output=null;outputReady=false;if(outputMode==='desktop')outputUnconfirmed=true;log('OUTPUT_CLOSED');});
 }
-function status(){return remote?remote.status():{local:true,database:service?.health()?'available':'offline',output:outputReady?'connected':'offline',outputUnconfirmed,lastOutputAck,authentication:'local-accounts',network:'local-only'};}
+function status(){return{...(remote?remote.status():{local:true,database:service?.health()?'available':'offline',output:(outputMode==='browser'?broadcastOutput?.info().status.ready:outputReady)?'connected':'offline',outputUnconfirmed,lastOutputAck,authentication:'local-accounts',network:'local-only'}),outputMode,browserOutput:broadcastOutput?{...broadcastOutput.info(),url:undefined}:null};}
+async function receivedRemoteProgram(program){if(outputReady)output.webContents.send('broadcastcg:program',program);if(outputMode==='browser'){try{await broadcastOutput.publish(program);remote?.acknowledge(program.revision);}catch{outputUnconfirmed=true;log('BROWSER_OUTPUT_UNCONFIRMED','failed');}}}
 function activateProfile(id){
  if(managed&&!managed.profiles.some(p=>p.id===id))throw Error('This installation requires an assigned production server.');
  remote?.close();remote=null;currentToken=null;service=localService;
  if(id){const profile=profiles().find(p=>p.id===id);if(!profile)throw Error('Saved server not found.');let bootstrapSecret='';try{const c=loadServer(hostDirectory);if(c.fingerprint===profile.fingerprint&&['127.0.0.1','localhost'].includes(new URL(profile.url).hostname))bootstrapSecret=c.bootstrapSecret;}catch{}
   const draftFile=user=>join(dataDirectory,'remote-draft-'+createHash('sha256').update(profile.id+':'+user).digest('hex')+'.bin');
   const recoveryStore={read(user){const file=draftFile(user);return fs.existsSync(file)?JSON.parse(safeStorage.decryptString(fs.readFileSync(file))):null;},write(user,value){if(!safeStorage.isEncryptionAvailable())throw Error('Windows draft protection is unavailable.');const file=draftFile(user);fs.writeFileSync(file+'.partial',safeStorage.encryptString(JSON.stringify(value)));fs.renameSync(file+'.partial',file);},clear(user){fs.rmSync(draftFile(user),{force:true});}};
-  remote=createRemoteAuthority({profile,settings:localService.settings,workstation:settings().workstation,bootstrapSecret,recoveryStore,onState:state=>studio?.webContents.send('broadcastcg:network',state),onProgram:program=>{if(outputReady)output.webContents.send('broadcastcg:program',program);},onLost:message=>{outputUnconfirmed=true;studio?.webContents.send('broadcastcg:network',{error:message,status:status()});}});service=remote;
+  remote=createRemoteAuthority({profile,settings:localService.settings,workstation:settings().workstation,bootstrapSecret,recoveryStore,onState:state=>studio?.webContents.send('broadcastcg:network',state),onProgram:receivedRemoteProgram,onLost:message=>{outputUnconfirmed=true;studio?.webContents.send('broadcastcg:network',{error:message,status:status()});}});service=remote;
  }
  rememberFile=join(dataDirectory,id?'remembered-server-'+id+'.bin':'remembered-login.bin');localService.settings.set('activeServer',id||null);
 }
@@ -114,6 +120,19 @@ function settings(){return{workstation:os.hostname(),role:'Graphics operator',lo
 function ipc(name,fn){ipcMain.handle('broadcastcg:'+name,async(event,...args)=>{if(!trustedStudio(event))throw Error('Operation not allowed.');if(maintenance&&name!=='status'&&name!=='info')throw Error('Recovery maintenance is in progress.');return fn(...args);});}
 function createWorkstation(){return createLocalService({directory:dataDirectory,encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable.',503);return safeStorage.encryptString(value);},decrypt:bytes=>safeStorage.decryptString(bytes),beforePublish,confirmProgram,event:log,workstation:()=>service?.settings.get('preferences',{})?.workstation||os.hostname()});}
 function registerIpc(){
+ ipc('broadcastOutput',async(action,data={})=>{
+  authorize(action==='status'?'outputs.view':'outputs.configure');
+  const result=()=>({mode:outputMode,...broadcastOutput.info(),obsConnected:!!obs?.connected()});
+  if(action==='status'){const r=result();try{authorize('outputs.configure');}catch{r.url=null;}return r;}
+  if(action==='start'){if(pending.size)throw Error('Wait for the current output command.');if(remote?.status().engineAttached)throw Error('Release this workstation output attachment before changing engines.');const value=outputConfig(data);await broadcastOutput.start(value);outputMode='browser';outputUnconfirmed=true;log('BROWSER_OUTPUT_STARTED');return result();}
+  if(action==='stop'||action==='desktop'){remote?.releaseOutput();await broadcastOutput.stop();outputMode=action==='desktop'?'desktop':'browser';outputUnconfirmed=true;log('BROWSER_OUTPUT_STOPPED');return result();}
+  if(action==='copyUrl'){const url=broadcastOutput.info().url;if(!url)throw Error('Start browser output first.');require('electron').clipboard.writeText(url);return true;}
+  if(action==='obsConnect'){if(obsBusy)throw Error('OBS connection is busy.');obsBusy=true;try{obs?.close();obs=null;const authority=service,token=currentToken,client=await connectObs(data);try{sameSession(authority,token,'outputs.configure');obs=client;return await obs.inspect();}catch(e){client.close();obs=null;throw e;}}finally{obsBusy=false;}}
+  if(action==='obsStatus'){if(!obs)throw Error('Connect to OBS first.');return obs.inspect();}
+  if(action==='obsDisconnect'){obs?.close();obs=null;return true;}
+  if(action==='obsAddSource'){if(!obs?.connected())throw Error('Connect to OBS first.');const {url,config}=broadcastOutput.info();if(!url||outputMode!=='browser')throw Error('Start browser output first.');const authority=service,token=currentToken;return obs.addSource({...data,url,config},()=>sameSession(authority,token,'outputs.configure'));}
+  throw Error('Unsupported broadcast output operation.');
+ });
  const editorState=createEditorState({settings:{get:(...v)=>localService.settings.get(...v),set:(...v)=>localService.settings.set(...v)},identity:()=>{const a=authorize('projects.view');return(localService.settings.get('activeServer')||'local')+':'+a.user.id;}});
  ipc('editorState',(section,projectId,value)=>editorState.access(section,projectId,value));
  ipc('recovery',async(action,data={})=>{
@@ -125,12 +144,12 @@ function registerIpc(){
   if(action==='export'){const authority=service,token=currentToken,bytes=await authority.recovery.export(token,data.id),result=await dialog.showSaveDialog(studio,{title:'Save encrypted recovery backup',defaultPath:'BroadcastCG-'+data.id+'.bcbackup',filters:[{name:'Encrypted BroadcastCG backup',extensions:['bcbackup']}]});if(result.canceled||!result.filePath)return false;sameSession(authority,token,'system.configure');sameSession(authority,token,'users.manage');fs.writeFileSync(result.filePath+'.partial',bytes);fs.renameSync(result.filePath+'.partial',result.filePath);return true;}
   if(action==='inspectFile'||action==='restoreFile'){
    if(action==='restoreFile'&&(remote||managed))throw Error('Restore a production server on its host while it is stopped.');
-   if(action==='restoreFile'){if(output&&!output.isDestroyed())throw Error('Close the output window before restoring.');localService.assertRecoveryIdle(currentToken);}
+   if(action==='restoreFile'){if(broadcastOutput.info().running)throw Error('Stop browser output before restoring.');if(output&&!output.isDestroyed())throw Error('Close the output window before restoring.');localService.assertRecoveryIdle(currentToken);}
    const token=currentToken,authority=service,result=await dialog.showOpenDialog(studio,{title:action==='restoreFile'?'Restore a local recovery backup':'Verify an encrypted backup',properties:['openFile'],filters:[{name:'Encrypted BroadcastCG backup',extensions:['bcbackup','bcserver']}]});if(result.canceled||!result.filePaths[0])return null;
    const file=result.filePaths[0];if(fs.statSync(file).size>200000086)throw Error('Backup exceeds 200 MB.');const bytes=fs.readFileSync(file),report=await inspectBackup(join(dataDirectory,'recovery-work'),bytes,data.password);authority.authorize(token,'users.manage');
    if(action==='inspectFile')return report;
    const answer=await dialog.showMessageBox(studio,{type:'warning',title:'Restore local workstation',message:'Replace the current local accounts and workspaces with this verified backup?',detail:report.projects+' workspaces, '+report.accounts+' accounts, '+report.images+' images. A rollback database will be retained. All sessions will be revoked. No TAKE, sequence or output will be replayed. Sign in using an account from the backup after restoration.',buttons:['Cancel','Restore verified backup'],defaultId:0,cancelId:0});if(answer.response!==1)return null;
-   if(service!==authority||currentToken!==token)throw Error('Connection changed. Start the restore again.');if(output&&!output.isDestroyed())throw Error('Close output before restoring.');localService.assertRecoveryIdle(token);maintenance=true;
+   if(service!==authority||currentToken!==token)throw Error('Connection changed. Start the restore again.');if(broadcastOutput.info().running)throw Error('Stop browser output before restoring.');if(output&&!output.isDestroyed())throw Error('Close output before restoring.');localService.assertRecoveryIdle(token);maintenance=true;
    const defaults={preferences:{},serverProfiles:[],activeServer:null,backupServer:null,hostStartup:false,studioWindow:null,outputWindow:null},preferences=Object.fromEntries(Object.entries(defaults).map(([k,fallback])=>[k,localService.settings.get(k,fallback)??fallback]));let closed=false;
    try{const prepared=await localService.recovery.prepareRestore(token,bytes,data.password);localService.assertRecoveryIdle(token);psdSessions.clear();aeSessions.clear();localService.close();closed=true;commitRestore(dataDirectory,prepared);service=localService=createWorkstation();closed=false;for(const [key,value] of Object.entries(preferences))localService.settings.set(key,value);completeRestore(dataDirectory);currentToken=null;clearRemember();log('RECOVERY_RESTORED','success');studio.webContents.reload();return{...report,restored:true};}
    catch(error){if(closed||fs.existsSync(join(dataDirectory,'restore-journal.json'))){if(!closed){try{localService.close();}catch{}}recoverInterruptedRestore(dataDirectory);service=localService=createWorkstation();currentToken=null;clearRemember();studio.webContents.reload();}throw error;}finally{maintenance=false;}
@@ -144,8 +163,8 @@ function registerIpc(){
   if(action==='test'){const client=createRemoteAuthority({profile:serverProfile(data),settings:localService.settings});try{return await client.test();}finally{client.close();}}
   if(action==='save'){const value=serverProfile(data),profiles=localService.settings.get('serverProfiles',[]);if(profiles.length>=16&&!profiles.some(p=>p.id===value.id))throw Error('Keep up to 16 server profiles.');if(value.id===localService.settings.get('activeServer'))throw Error('Switch to local mode before changing the active server.');value.id=value.id||randomUUID();localService.settings.set('serverProfiles',[...profiles.filter(p=>p.id!==value.id),value]);return connectionInfo();}
   if(action==='backupProfile'){if(data.id&&!localService.settings.get('serverProfiles',[]).some(p=>p.id===data.id))throw Error('Choose a saved server.');localService.settings.set('backupServer',data.id||null);return connectionInfo();}
-  if(action==='switch'){if(outputReady)throw Error('Close the output window before switching authority.');if(managed&&!profiles().some(p=>p.id===data.id))throw Error('Choose an assigned production server.');if(data.id&&!profiles().some(p=>p.id===data.id))throw Error('Choose a saved server.');if(currentToken){try{await service.auth.endSession(currentToken);}catch{}}psdSessions.clear();aeSessions.clear();activateProfile(data.id);studio.webContents.reload();return true;}
-  if(action==='attachOutput'){authorize('outputs.configure');if(!remote)throw Error('Connect to a production server first.');if(!outputReady)throw Error('Open output first, then attach this workstation.');remote.attachOutput();return true;}
+  if(action==='switch'){if(broadcastOutput.info().running)throw Error('Stop browser output before switching authority.');if(outputReady)throw Error('Close the output window before switching authority.');if(managed&&!profiles().some(p=>p.id===data.id))throw Error('Choose an assigned production server.');if(data.id&&!profiles().some(p=>p.id===data.id))throw Error('Choose a saved server.');if(currentToken){try{await service.auth.endSession(currentToken);}catch{}}psdSessions.clear();aeSessions.clear();obs?.close();obs=null;activateProfile(data.id);studio.webContents.reload();return true;}
+  if(action==='attachOutput'){authorize('outputs.configure');if(!remote)throw Error('Connect to a production server first.');beforePublish();remote.attachOutput();return true;}
   if(action==='releaseOutput'){authorize('outputs.configure');remote?.releaseOutput();return true;}
   if(action==='locks'){if(!remote)throw Error('Ownership is available in server mode.');return remote.locks(data.projectId,data.operation);}
   if(action==='provision'||action==='startHost'||action==='stopHost'||action==='hostStartup'||action==='configureHost'||action==='restoreHost'){
@@ -162,7 +181,7 @@ function registerIpc(){
   throw Error('Unsupported connection operation.');
  });
   ipc('auth',async(action,data={})=>{try{
-    if(['logout','login','setup','changePassword'].includes(action)){psdSessions?.clear();aeSessions?.clear();}
+    if(['logout','login','setup','changePassword'].includes(action)){psdSessions?.clear();aeSessions?.clear();obs?.close();obs=null;}
     let value;
     if(action==='bootstrap')value=await service.auth.bootstrap();
     else if(action==='setup'||action==='login'){
@@ -175,7 +194,7 @@ function registerIpc(){
     else throw new ServiceError('Unknown account operation.',400);
     return {ok:true,value};
   }catch(error){return{ok:false,status:error.status||500,error:error.status?error.message:'The account operation failed.'};}});
-  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Timed access, deployment and recovery',...status()};});
+  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Broadcast output integration',...status()};});
   ipc('status',()=>{authorize();return status();});ipc('settings',()=>{authorize();return settings();});
   ipc('saveSettings',value=>{
     authorize('system.configure');
@@ -239,10 +258,10 @@ function registerIpc(){
     service.authorize(token,'diagnostics.view');
     await fs.promises.writeFile(result.filePath,JSON.stringify(report,null,2));return true;
   });
-  ipcMain.on('broadcastcg:rendered',(event,revision)=>{if(event.sender!==output?.webContents||!trusted(event.senderFrame)||typeof revision!=='string')return;if(remote){remote.acknowledge(revision);return;}const waiter=pending.get(revision);if(waiter){pending.delete(revision);waiter.resolve();}});
+  ipcMain.on('broadcastcg:rendered',(event,revision)=>{if(outputMode!=='desktop'||event.sender!==output?.webContents||!trusted(event.senderFrame)||typeof revision!=='string')return;if(remote){remote.acknowledge(revision);return;}const waiter=pending.get(revision);if(waiter){pending.delete(revision);waiter.resolve();}});
 }
 function menu(){Menu.setApplicationMenu(Menu.buildFromTemplate([
-  {label:'BroadcastCG',submenu:[{label:'About BroadcastCG',click:()=>dialog.showMessageBox(studio,{type:'info',message:'BroadcastCG '+app.getVersion(),detail:'Local graphics workstation and self-hosted LAN production with accounts, workspace ownership and acknowledged desktop output. SDI/NDI hardware output is not included.'})},{type:'separator'},{role:'quit'}]},
+  {label:'BroadcastCG',submenu:[{label:'About BroadcastCG',click:()=>dialog.showMessageBox(studio,{type:'info',message:'BroadcastCG '+app.getVersion(),detail:'Local graphics workstation with desktop and transparent OBS Browser Source output, accounts and self-hosted LAN production. Direct SDI/NDI hardware output is not included.'})},{type:'separator'},{role:'quit'}]},
   {label:'Edit',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},
   {label:'View',submenu:[{role:'togglefullscreen',accelerator:'F11'},{role:'resetZoom'},{role:'zoomIn'},{role:'zoomOut'}]},
   {label:'Output',submenu:[{label:'Open desktop output',click:()=>menuOutput()},...screen.getAllDisplays().map(d=>({label:'Move output to '+(d.label||'Display '+d.id),click:()=>menuOutput(d.id)}))]},
@@ -256,6 +275,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
 
     recoverInterruptedRestore(dataDirectory);service=createWorkstation();
     localService=service;if(!managed&&localService.settings.get('hostStartup',false)){try{await startHost();}catch{log('PRODUCTION_HOST_START_FAILED','failed');}}activateProfile(managed?(managed.profiles.find(p=>p.id===localService.settings.get('activeServer'))||managed.profiles[0]).id:localService.settings.get('activeServer'));
+    broadcastOutput=createOutputController({directory:dataDirectory,appDirectory:__dirname,executable:process.execPath,settings:{get:(...a)=>localService.settings.get(...a),set:(...a)=>localService.settings.set(...a)},protect:value=>{if(!safeStorage.isEncryptionAvailable())throw Error('Windows credential protection is unavailable.');return safeStorage.encryptString(value);},unprotect:bytes=>safeStorage.decryptString(bytes),readProgram:async()=>{const r=await service.handle(new Request('broadcastcg://app/api/program'),service.outputContext);if(!r.ok)throw Error('Program unavailable');return r.json();},readAsset:path=>service.handle(new Request('broadcastcg://app'+path),service.outputContext)});
     psdSessions=createPsdSessions({workerPath:join(__dirname,'app','psd-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importPsd(draft,options,token)});
     aeSessions=createAeSessions({workerPath:join(__dirname,'app','ae-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importAe(draft,options,token)});
     if(fs.existsSync(rememberFile)){try{acceptSession(await service.auth.resume(safeStorage.decryptString(fs.readFileSync(rememberFile))));}catch(error){if(error.status!==503)clearRemember();log('REMEMBERED_LOGIN_UNAVAILABLE');}}
@@ -277,7 +297,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     registerIpc();menu();studio=createWindow('studio');
     studio.webContents.once('did-finish-load',()=>studio.webContents.setZoomFactor(settings().uiScale));
     studio.on('close',event=>{
-      if(!quitting&&outputReady&&!qa){const response=dialog.showMessageBoxSync(studio,{type:'warning',title:'Close BroadcastCG?',message:'Closing BroadcastCG will close the local output.',buttons:['Keep running','Close application'],defaultId:0,cancelId:0});if(response===0){event.preventDefault();return;}}
+      if(!quitting&&(outputReady||broadcastOutput.info().running)&&!qa){const response=dialog.showMessageBoxSync(studio,{type:'warning',title:'Close BroadcastCG?',message:'Closing BroadcastCG will disconnect its output. An external receiver may hold its last graphic.',buttons:['Keep running','Close application'],defaultId:0,cancelId:0});if(response===0){event.preventDefault();return;}}
     });
     studio.webContents.on('will-prevent-unload',event=>{const answer=dialog.showMessageBoxSync(studio,{type:'warning',message:'There are unsaved editor changes.',detail:'Keep the application open to save or export your work.',buttons:['Keep editing','Close anyway'],defaultId:0,cancelId:0});if(answer===1)event.preventDefault();});
     studio.on('closed',()=>{studio=null;quitting=true;if(output&&!output.isDestroyed())output.close();app.quit();});
@@ -286,5 +306,5 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   }).catch(error=>{log('STARTUP_FAILED','failed');dialog.showErrorBox('BroadcastCG could not start',error.message);app.exit(1);});
 }
 app.on('before-quit',()=>{quitting=true;});
-app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{psdSessions?.clear();aeSessions?.clear();if(!remote)localService?.auth.endSession(currentToken);remote?.close();localService?.close();}catch{};});
+app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{broadcastOutput?.dispose();obs?.close();psdSessions?.clear();aeSessions?.clear();if(!remote)localService?.auth.endSession(currentToken);remote?.close();localService?.close();}catch{};});
 app.on('window-all-closed',()=>app.quit());

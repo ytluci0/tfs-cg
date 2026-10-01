@@ -8,6 +8,7 @@ export type NetworkState={status:DesktopStatus;sessionEnded?:boolean;error?:stri
 export type ConnectionInfo={managed:boolean;profiles:ServerProfile[];activeId:string|null;backupId:string|null;status:DesktopStatus;host:null|{name:string;host:string;port:number;fingerprint:string;directory:string;running:boolean;mode:string}};
 export type DesktopSettings={workstation:string;role:string;location:string;uiScale:number;startup:boolean;displays:{id:number;label:string;width:number;height:number;scaleFactor:number}[]};
 export type DesktopBridge={
+ broadcastOutput:<T=unknown>(action:string,data?:unknown)=>Promise<T>;
  editorState:<T=unknown>(section:'workspace'|'panel',projectId?:string,value?:unknown)=>Promise<T|null>;
  recovery:<T=unknown>(action:string,data?:unknown)=>Promise<T>;
  network:<T=unknown>(action:string,data?:unknown)=>Promise<T>;

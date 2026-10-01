@@ -5,6 +5,7 @@ import OutputView from '../app/studio/output-view';
 import {desktopBridge,DesktopSettings,DesktopStatus} from '../lib/desktop';
 import {LocalSession,Permission} from '../lib/permissions';
 import {api} from '../lib/client-api';
+import {BroadcastOutput} from './broadcast-output';
 import {RecoveryCenter} from './recovery-center';
 import {Connections} from './connections';
 import {AccountForm,Administration} from './accounts';
@@ -29,16 +30,17 @@ function DesktopApp(){
 }
 function Workspace({session,onSession,logout}:{session:LocalSession;onSession:(s:LocalSession)=>void;logout:()=>Promise<void>}){
  const [connections,setConnections]=useState(false);
- const [recovering,setRecovering]=useState(false);
+ const [recovering,setRecovering]=useState(false),[broadcast,setBroadcast]=useState(false);
  const [open,setOpen]=useState(false),[admin,setAdmin]=useState(false),[account,setAccount]=useState(false),[preferences,setPreferences]=useState<DesktopSettings|null>(null),[status,setStatus]=useState<DesktopStatus|null>(null),[info,setInfo]=useState<{version:string;dataDirectory:string}|null>(null),[message,setMessage]=useState(''),[workspaceReady,setWorkspaceReady]=useState<boolean|null>(null),[leaving,setLeaving]=useState(false);
  const flush=useRef<null|(()=>Promise<void>)>(null),can=(p:Permission)=>session.user.permissions.includes(p);
  useEffect(()=>{let active=true;const refresh=()=>bridge.status().then(s=>active&&setStatus(s)).catch(()=>active&&setStatus(null));refresh();const timer=setInterval(refresh,2000);bridge.info().then(setInfo).catch(()=>{});bridge.settings().then(setPreferences).catch(()=>{});if(!can('projects.view'))setWorkspaceReady(false);else api<unknown[]>('/api/projects').then(list=>{if(active)setWorkspaceReady(list.length>0||can('projects.create'));}).catch(e=>setMessage(e.message));return()=>{active=false;clearInterval(timer);};},[]);
  async function signOut(){setLeaving(true);try{await flush.current?.();}catch{}try{await logout();}catch(e){setMessage((e as Error).message);setLeaving(false);}}
- return <><div className="desktop-strip"><strong><span className="desktop-dot"/>BROADCAST CG</strong><span>{status?.local?'LOCAL WORKSTATION':`${status?.serverName||'PRODUCTION'} · ${status?.network||'connecting'}`}</span><button onClick={()=>setConnections(true)}>Connections</button><span className="desktop-output-state">{status?.output==='connected'?(status.outputUnconfirmed?'OUTPUT UNCONFIRMED':'OUTPUT CONNECTED'):'OUTPUT OFFLINE'}</span><button onClick={()=>setAccount(true)}>{session.user.displayName} · {session.user.role}</button>{(can('users.manage')||can('audit.view'))&&<button onClick={()=>setAdmin(true)}>Accounts & access</button>}{can('users.manage')&&can('system.configure')&&session.user.accessExpiresAt===null&&<button onClick={()=>setRecovering(true)}>Backups & recovery</button>}<button onClick={()=>setOpen(true)}>System</button><button disabled={leaving} onClick={()=>void signOut()}>{leaving?'Signing out…':'Sign out'}</button></div>
+ return <><div className="desktop-strip"><strong><span className="desktop-dot"/>BROADCAST CG</strong><span>{status?.local?'LOCAL WORKSTATION':`${status?.serverName||'PRODUCTION'} · ${status?.network||'connecting'}`}</span><button onClick={()=>setConnections(true)}>Connections</button><span className="desktop-output-state">{status?.output==='connected'?(status.outputUnconfirmed?'OUTPUT UNCONFIRMED':'OUTPUT CONNECTED'):'OUTPUT OFFLINE'}</span><button onClick={()=>setAccount(true)}>{session.user.displayName} · {session.user.role}</button>{(can('users.manage')||can('audit.view'))&&<button onClick={()=>setAdmin(true)}>Accounts & access</button>}{can('users.manage')&&can('system.configure')&&session.user.accessExpiresAt===null&&<button onClick={()=>setRecovering(true)}>Backups & recovery</button>}{can('outputs.view')&&<button onClick={()=>setBroadcast(true)}>Broadcast output</button>}<button onClick={()=>setOpen(true)}>System</button><button disabled={leaving} onClick={()=>void signOut()}>{leaving?'Signing out…':'Sign out'}</button></div>
  {session.user.accessExpiresAt&&<div className="account-idle">Access expires {new Date(session.user.accessExpiresAt).toLocaleString()}. Contact your administrator to renew.</div>}
  {session.idleExpiresAt-Date.now()<5*60000&&<div className="account-idle">Your session will lock soon. Click or type to keep working. Output will continue.</div>}
  <div className="desktop-workspace">{workspaceReady===null?<div className="account-empty">Loading assigned workspaces…</div>:workspaceReady?<Studio session={session} onFlushReady={fn=>{flush.current=fn;}}/>:<div className="account-empty"><h1>No workspace access</h1><p>Ask a local administrator to assign a saved project and allow workspace viewing.</p></div>}</div>
  {connections&&<Connections onClose={()=>setConnections(false)} beforeSwitch={async()=>{await flush.current?.();}}/>}
+ {broadcast&&<BroadcastOutput canConfigure={can('outputs.configure')} onClose={()=>setBroadcast(false)}/>}
  {recovering&&<RecoveryCenter onClose={()=>setRecovering(false)} beforeMaintenance={async()=>{await flush.current?.();}}/>}
  {account&&<div className="desktop-modal-backdrop"><AccountForm session={session} onSession={onSession} onClose={()=>setAccount(false)}/></div>}
  {admin&&<Administration session={session} onClose={()=>setAdmin(false)} startAudit={!can('users.manage')}/>}

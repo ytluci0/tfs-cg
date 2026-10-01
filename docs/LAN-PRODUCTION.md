@@ -57,3 +57,8 @@ Failover is **manual**, with no live replication, automatic promotion or split-b
 Phase 8 qualification included 112 automated tests, including pinned TLS before credential transmission, two independent clients, stale edits, counter deltas, lease permissions/expiry, duplicate TAKE protection, missing acknowledgement, disconnect/restart and encrypted recovery with revoked sessions. Native Electron QA exercised saved profiles, a separate bundled background server, real output acknowledgement, a second client, live editor synchronization and dirty-draft conflicts. Screenshots were inspected. Local mode, PSD/AE conversion and sports regressions also passed.
 
 These tests use separate processes/clients on this Windows 11 PC. Physical multi-PC LAN/firewall qualification, the elevated SCM install, long-duration/GPU stress tests and broadcast hardware remain unverified. Adobe plugin qualification is deferred at the user's request. Phase 9 adds [access periods, managed recipient setup, portable packages and recovery](DEPLOYMENT-AND-ACCESS.md). Public code signing and a physical Windows device matrix remain unqualified. Phase 10 covers output SDKs and production qualification.
+
+
+## Phase 10A browser receiver
+
+Version 0.10.0 can attach a ready local OBS Browser Source receiver instead of the desktop output window. Start it in **Broadcast output** on the output PC, load the URL in OBS, then attach this PC here. TAKE waits for that receiver; a desktop monitor cannot substitute its acknowledgement. Stop releases the output attachment. See [output setup and precise failure behavior](BROADCAST-OUTPUT.md). The bridge itself listens on loopback only; remote operators still use the pinned HTTPS production server.

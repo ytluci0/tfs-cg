@@ -15,10 +15,11 @@ await viteBuild({
   css: { postcss: resolve(root, 'postcss.config.mjs') },
   build: { outDir: resolve(desktop, 'app/renderer'), emptyOutDir: true },
 });
+await viteBuild({configFile:false,root:desktop,base:'./',publicDir:false,plugins:[react()],resolve:{alias:{'@':root}},build:{outDir:resolve(desktop,'app/browser-output'),emptyOutDir:true,rollupOptions:{input:resolve(desktop,'output.html')}}});
 await bundle({absWorkingDir:root,entryPoints: ['desktop/local-service.mjs'], outfile: 'desktop/app/service.cjs', bundle: true, platform: 'node', format: 'cjs', target: 'node24',tsconfigRaw:{}});
-for(const name of ['network-runtime','server-entry'])await bundle({absWorkingDir:root,entryPoints:['desktop/'+name+'.mjs'],outfile:'desktop/app/'+name+'.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',external:['bufferutil','utf-8-validate'],tsconfigRaw:{}});
+for(const name of ['network-runtime','server-entry','output-host','output-config','obs-client'])await bundle({absWorkingDir:root,entryPoints:['desktop/'+name+'.mjs'],outfile:'desktop/app/'+name+'.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',external:['bufferutil','utf-8-validate'],tsconfigRaw:{}});
 execFileSync('C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe',['/nologo','/target:exe','/out:'+resolve(desktop,'assets/BroadcastCGHost.exe'),'/reference:System.ServiceProcess.dll',resolve(desktop,'windows-host.cs')],{windowsHide:true});
-await bundle({absWorkingDir:root,entryPoints: ['desktop/smoke.mjs'], outfile: 'desktop/app/smoke.cjs', bundle: true, platform: 'node', format: 'cjs', target: 'node24',tsconfigRaw:{}});
+await bundle({absWorkingDir:root,entryPoints: ['desktop/smoke.mjs'], outfile: 'desktop/app/smoke.cjs', bundle: true, platform: 'node', format: 'cjs', target: 'node24',external:['electron'],tsconfigRaw:{}});
 await bundle({absWorkingDir:root,entryPoints:['desktop/psd-worker.mjs'],outfile:'desktop/app/psd-worker.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',tsconfigRaw:{}});
 await bundle({absWorkingDir:root,entryPoints:['desktop/ae-worker.mjs'],outfile:'desktop/app/ae-worker.cjs',bundle:true,platform:'node',format:'cjs',target:'node24',tsconfigRaw:{}});
 // Code-native icon: scalable source with PNG-backed Windows ICO sizes.
