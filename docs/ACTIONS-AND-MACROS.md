@@ -48,7 +48,7 @@ Schema 3 adds the journal without changing the enclosing version-1 project forma
 
 ## Current boundaries
 
-- Timers in this phase are cancellable sequence waits. Sports match/countdown widgets still run in the editor and are scheduled for authoritative clocks in phase 5. Pause a running clock before using its value in a condition, variable action, value template or API variable binding. Unrelated commands can run while a clock continues, with its displayed value catching up after reconciliation. A renderer reload stops those existing sports clock widgets.
+- As of 0.5.0, desktop sports clocks run in the service and continue through editor reload. Use Control clock actions to change their values; conditions/templates read their current values. Application restart pauses clocks at the last checkpoint. Bounded counter and Sports / esports actions are also available. See [sports guide](SPORTS-AND-ESPORTS.md).
 - Generic API actions use the existing HTTPS GET integration with configured credentials and saved data bindings. Custom HTTP methods, arbitrary scripts and shell execution are not supported.
 - Preview/TAKE sequence steps preserve staged data. Use another Stage step before TAKE if you want changes made after the first Stage to appear in the snapshot.
 - Project-scoped macros are shared resources. Copying/prefixing a panel component does not clone its referenced macros; edit or duplicate the macro manually for a separate workflow.

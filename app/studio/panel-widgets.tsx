@@ -8,13 +8,13 @@ import {Choice,Num} from './controls';import {formationOptions,formationPoints} 
 
 export const visualKinds=['pitch','bench','scoreboard','label','image'];
 export const widgetFields=['homeTeam','awayTeam','homeScore','awayScore','matchClock','homeFormation','awayFormation','homeColor','awayColor'] as const;
-export function PanelWidget({control:c,project,interactive,chosenPlayer,bench,setBench,onPlayer,onSub,onError,setVar,toggleClock,clockRunning}:{control:Control;project:Project;interactive:boolean;chosenPlayer:string;bench:string|null;setBench:(id:string|null)=>void;onPlayer:(p:Player)=>void;onSub:(out:Player,sub:Player)=>void;onError:(e:unknown)=>void;setVar:(key:string,value:string|number|boolean)=>void;toggleClock:(key:string)=>void;clockRunning:boolean}){
+export function PanelWidget({control:c,project,interactive,chosenPlayer,bench,setBench,onPlayer,onSub,onError,setVar,toggleClock,clockRunning,onScore}:{control:Control;project:Project;interactive:boolean;chosenPlayer:string;bench:string|null;setBench:(id:string|null)=>void;onPlayer:(p:Player)=>void;onSub:(out:Player,sub:Player)=>void;onError:(e:unknown)=>void;setVar:(key:string,value:string|number|boolean)=>void;toggleClock:(key:string)=>void;clockRunning:boolean;onScore:(key:string,delta:number)=>void}){
  const drag=useRef<{id:string;x:number;y:number;active:boolean}|null>(null),suppressClick=useRef(false);
  const key=(field:typeof widgetFields[number])=>c.dataFields?.[field]||field;
  const value=(field:typeof widgetFields[number],fallback:string|number)=>project.variables[key(field)]??fallback;
  const teamColor=(team:string)=>{const field=team==='home'?'homeColor':'awayColor',bound=c.dataFields?.[field],v=bound?project.variables[bound]:c[field]||project.variables[field];return typeof v==='string'&&/^#[a-f0-9]{6}$/i.test(v)?v:team==='home'?'#3478ee':'#df3b48';};
  const positions=(team:'home'|'away')=>formationPoints(project,String(value(team==='home'?'homeFormation':'awayFormation','4-3-3')));
- function changeScore(team:'home'|'away',delta:number){const field=team==='home'?'homeScore':'awayScore',current=value(field,0);if(typeof current!=='number'){onError(Error('Connect the scoreboard to numeric score variables.'));return;}setVar(key(field),Math.max(0,current+delta));}
+ function changeScore(team:'home'|'away',delta:number){const field=team==='home'?'homeScore':'awayScore',current=value(field,0);if(typeof current!=='number'){onError(Error('Connect the scoreboard to numeric score variables.'));return;}onScore(key(field),delta);}
  if(c.kind==='label')return <div className="panel-label-widget" style={{color:c.color,fontSize:c.fontSize||24}}>{textValue(c.label,project.variables)}</div>;
  if(c.kind==='image'){
   const src=textValue(c.imageSrc||'',project.variables);

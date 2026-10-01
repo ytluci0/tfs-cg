@@ -2,8 +2,12 @@ import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {mkdirSync} from 'node:fs';
 import {join} from 'node:path';
-import {validateProject,sceneSchema,variablesSchema,sourceSchema,variableActionValue,textValue,applyDataBindings,action} from '../lib/studio-model.ts';
+import {validateProject,sceneSchema,variablesSchema,sourceSchema,variableActionValue,textValue,applyDataBindings,action,pathValue} from '../lib/studio-model.ts';
 
+import {migrateSports,createSportsClocks} from './sports-clocks.mjs';
+import {parseSportOperation,applySportOperation} from '../lib/sports-logic.ts';
+import {boundedNumber} from '../lib/broadcast-tools.ts';
+import {exposedVariables} from './project-policy.mjs';
 import {ServiceError} from './service-error.mjs';
 export {ServiceError} from './service-error.mjs';
 import {createSecurity,migrateSecurity} from './security.mjs';
@@ -29,12 +33,12 @@ function assetIds(project){
 }
 
 /** Single-workstation authority. No network listener and no cloud bindings. */
-export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>{},confirmProgram=async()=>{},event=()=>{},workstation=()=>'Local workstation',now=Date.now}){
+export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>{},confirmProgram=async()=>{},event=()=>{},workstation=()=>'Local workstation',now=Date.now,monotonic}){
   mkdirSync(directory,{recursive:true});
   const db=new DatabaseSync(join(directory,'broadcastcg.sqlite'));
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version>3){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
+  if(version>4){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
   if(version===0)db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,document TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE assets(id TEXT PRIMARY KEY,name TEXT NOT NULL,mime TEXT NOT NULL,bytes BLOB NOT NULL);
@@ -45,10 +49,12 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     PRAGMA user_version=1; COMMIT;`);
   migrateSecurity(db,directory,version===1);
   migrateCommands(db,directory,version===2);
+  migrateSports(db,directory,version===3);
+  const clocks=createSportsClocks({db,monotonic});
   const security=createSecurity({db,now,workstation,event}),{auth,authenticate,requirePermission,requireWorkspace,canAccess,record}=security;
   const outputContext=Object.freeze({output:true});
   function actorFor(context){return authenticate(context?.token);}
-  function readProject(actor,id){requireWorkspace(actor,id);const row=db.prepare('SELECT * FROM projects WHERE id=?').get(id);if(!row)throw new ServiceError('Workspace not found.',404);return {...row,project:JSON.parse(row.document)};}
+  function readProject(actor,id){requireWorkspace(actor,id);const row=db.prepare('SELECT * FROM projects WHERE id=?').get(id);if(!row)throw new ServiceError('Workspace not found.',404);return {...row,project:clocks.project(JSON.parse(row.document))};}
   function canReadAsset(actor,id){const row=db.prepare('SELECT uploaded_by FROM assets WHERE id=?').get(id);return !!row&&(row.uploaded_by===actor.user.id||db.prepare('SELECT project_id FROM project_assets WHERE asset_id=?').all(id).some(p=>canAccess(actor,p.project_id)));}
   function validateAssets(actor,project){for(const id of assetIds(project))if(!canReadAsset(actor,id))throw new ServiceError('An image is missing or belongs to an inaccessible workspace.',403);}
   // Program deliberately starts empty. A restart never replays a TAKE.
@@ -57,6 +63,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const settings={get(key,fallback=null){const row=db.prepare('SELECT document FROM settings WHERE key=?').get(key);return row?JSON.parse(row.document):fallback;},set(key,value){db.prepare('INSERT INTO settings(key,document) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET document=excluded.document').run(key,JSON.stringify(value));}};
   audit('APPLICATION_START','local','success');
   function commitActionProject(actor,next){
+    next=clocks.project(next);
     const old=readProject(actor,next.id);checkProjectChanges(actor,old.project,next,requirePermission);validateProject(next);validateAssets(actor,next);
     db.exec('BEGIN IMMEDIATE');try{const revision=old.revision+1;db.prepare('UPDATE projects SET document=?,revision=?,updated_at=? WHERE id=?').run(JSON.stringify(next),revision,now(),next.id);
       for(const key of Object.keys(next.variables))if(old.project.variables[key]!==next.variables[key])record('VARIABLE_CHANGED',key,'success',actor,{projectId:next.id,previous:old.project.variables[key]??null,next:next.variables[key]});
@@ -69,10 +76,13 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       let actions,label,output=null;
       if(data.kind==='control'){const panel=project.panels.find(p=>p.id===data.panelId),control=panel?.controls.find(c=>c.id===data.controlId);if(!control)throw new ServiceError('Control no longer exists.',404);if(control.hidden)throw new ServiceError('This control is hidden from operation.',403);actions=control.actions;label=control.label;}
       else if(data.kind==='macro'){const macro=project.macros?.find(m=>m.id===data.macroId);if(!macro)throw new ServiceError('Macro no longer exists.',404);actions=macro.actions;label=macro.name;}
+      else if(data.kind==='clock'){actions=[action('clock',data.variable,JSON.stringify(data.clock))];label='Clock - '+data.variable;}
+      else if(data.kind==='counter'){actions=[action('counter',data.variable,JSON.stringify({delta:data.delta,value:data.value,panelId:data.panelId,controlId:data.controlId}))];label='Counter - '+data.variable;}
+      else if(data.kind==='sport'){const op=parseSportOperation(data.operation);actions=[action('sport',op.op,JSON.stringify(op))];label='Match - '+op.op;}
       else if(data.kind==='output'){if(!['show','hide','update'].includes(data.output?.mode))throw new ServiceError('Choose a supported output command.');output=data.output;actions=[action(output.mode==='hide'?'clear':output.mode==='update'?'update':'take')];label=output.mode==='show'?'TAKE':output.mode==='hide'?'Hide output':'Update live';}
       else throw new ServiceError('Choose a control, macro or output command.');
       let plan;try{plan=planActions(project,actions);}catch(e){throw new ServiceError(e.message);}
-      for(const entry of plan){const a=entry.action,permission={take:'graphics.take',clear:'graphics.clear',update:'graphics.updateLive',fetch:'data.fetch'}[a.type];if(permission)requirePermission(actor,permission);}
+      for(const entry of plan){const a=entry.action,permission={take:'graphics.take',clear:'graphics.clear',update:'graphics.updateLive',fetch:'data.fetch'}[a.type];if(permission)requirePermission(actor,permission);if(a.type==='sport'){const op=parseSportOperation(JSON.parse(a.value));if(op.op==='configure'){requirePermission(actor,'panels.edit');requirePermission(actor,'data.configure');}if(op.op==='fetch-roster')requirePermission(actor,'data.fetch');}if(['clock','counter'].includes(a.type)&&!actor.user.permissions.includes('data.configure')&&!exposedVariables(project).has(a.target))throw new ServiceError('This variable is not exposed for operation.',403);}
       if(publishing&&plan.some(s=>['take','clear','update'].includes(s.action.type)))throw new ServiceError('An output command is awaiting acknowledgement.',409);
       const stage=stageSnapshot(data.stage,project,actor);if(output?.mode!=='hide'&&output)stageSnapshot(output,project,actor);
       return{plan,label,stage,output,usesOutput:plan.some(s=>['take','clear','update'].includes(s.action.type))};
@@ -80,7 +90,11 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     async execute(a,ctx){
       const current=()=>{if(ctx.signal.aborted)throw new ServiceError('Sequence cancelled.',409);const actor=authenticate(ctx.token);requireWorkspace(actor,ctx.projectId);return{actor,project:readProject(actor,ctx.projectId).project};};
       let {actor,project}=current();const value=textValue(a.value,project.variables);
-      if(a.type==='set'||a.type==='increment'){let next;try{next=variableActionValue(project.variables,a.target,value,a.type);}catch(e){throw new ServiceError(e.message);}commitActionProject(actor,{...project,variables:{...project.variables,[a.target]:next}});}
+      if(a.type==='clock'){const options=JSON.parse(a.value);clocks.operate(project,a.target,options);commitActionProject(actor,project);record('CLOCK_'+options.op.toUpperCase(),a.target,'success',actor,{projectId:project.id});}
+      else if(a.type==='counter'){if(clocks.has(project.id,a.target))throw new ServiceError('Use a Clock action for a managed time variable.');const options=JSON.parse(a.value);if(typeof project.variables[a.target]!=='number')throw new ServiceError('Choose a numeric counter variable.');let bounds={minimum:0,maximum:999999};if(options.controlId){const c=project.panels.find(p=>p.id===options.panelId)?.controls.find(c=>c.id===options.controlId);if(!c||c.kind!=='counter'||c.variable!==a.target)throw new ServiceError('Counter control no longer matches.');bounds=c;}const n=options.value!==undefined?options.value:Number(project.variables[a.target])+options.delta;if(!Number.isFinite(n))throw new ServiceError('Enter a finite counter value.');commitActionProject(actor,{...project,variables:{...project.variables,[a.target]:boundedNumber(bounds,n)}});}
+      else if(a.type==='sport'){let op=parseSportOperation(JSON.parse(a.value));if(op.op==='fetch-roster'){const source=project.sources.find(s=>s.id===op.sourceId);if(!source)throw new ServiceError('Choose a saved roster source.');const response=await route(new Request('broadcastcg://app/api/sources/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,projectId:project.id}),signal:ctx.signal}),{token:ctx.token});const result=await response.json();if(!response.ok)throw new ServiceError(result.error,response.status);const rows=pathValue(result.data,op.rowsPath);if(!Array.isArray(rows))throw new ServiceError('The roster path must point to an array.');op={op:'roster',team:op.team,rows,mapping:op.mapping};({actor,project}=current());}let next;try{next=applySportOperation(project,op,ctx.commandId,new Date(now()).toISOString());}catch(e){throw new ServiceError(e.message);}validateProject(next);validateAssets(actor,next);if(op.op==='configure'){for(const key of Object.keys(clocks.snapshot(project.id)))clocks.operate(project,key,{op:'pause'});for(const key of ['matchClock','shotClock','timeoutClock'])clocks.operate(next,key,{op:'reset',seconds:key==='matchClock'?(op.kind==='basketball'?next.sports.periodSeconds:0):key==='shotClock'?24:60,direction:key==='matchClock'&&op.kind!=='basketball'?'up':'down'});}if(op.op==='phase'&&['Break','Final'].includes(op.value)||op.op==='finish-game')for(const key of Object.keys(clocks.snapshot(project.id)))clocks.operate(project,key,{op:'pause'});commitActionProject(actor,next);record('SPORT_'+op.op.toUpperCase(),project.id,'success',actor,{projectId:project.id});}
+      else
+      if(a.type==='set'||a.type==='increment'){if(clocks.has(project.id,a.target))throw new ServiceError('Use a Clock action to change this managed time variable.');let next;try{next=variableActionValue(project.variables,a.target,value,a.type);}catch(e){throw new ServiceError(e.message);}commitActionProject(actor,{...project,variables:{...project.variables,[a.target]:next}});}
       else if(a.type==='preview'){const scene=project.scenes.find(s=>s.id===a.target);ctx.setStage({scene:structuredClone(scene),variables:{...project.variables}});}
       else if(['take','clear','update'].includes(a.type)){
         if(a.type==='clear'&&program?.projectId&&program.projectId!==ctx.projectId)throw new ServiceError('Switch to the workspace currently on output before hiding it.',409);
@@ -88,7 +102,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
         await publishCommand({...payload,projectId:project.id},{token:ctx.token},ctx.commandId);
       }else if(a.type==='fetch'){
         const source=project.sources.find(s=>s.id===a.target),response=await route(new Request('broadcastcg://app/api/sources/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,projectId:project.id}),signal:ctx.signal}),{token:ctx.token});const result=await response.json();if(!response.ok)throw new ServiceError(result.error,response.status);
-        ({actor,project}=current());const applied=applyDataBindings(project,source.id,result.data);if(applied.missing)throw new ServiceError('API response did not match '+applied.missing+' binding(s). Data was not changed.');commitActionProject(actor,applied.project);
+        ({actor,project}=current());if(project.bindings.some(b=>b.sourceId===source.id&&b.destination==='variable'&&clocks.has(project.id,b.targetVariable)))throw new ServiceError('Clock variables are controlled by clock actions, not API value bindings.');const applied=applyDataBindings(project,source.id,result.data);if(applied.missing)throw new ServiceError('API response did not match '+applied.missing+' binding(s). Data was not changed.');commitActionProject(actor,applied.project);
       }
     }
   });
@@ -114,6 +128,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       finally{publishing=false;}
     }
 
+  function liveProgram(){if(!program)return null;const variables={...program.variables};for(const [key,value] of Object.entries(clocks.values(program.projectId)))if(Object.hasOwn(variables,key))variables[key]=value;return{...program,variables};}
   async function route(request,context){
     const url=new URL(request.url),path=url.pathname,method=request.method;
     const outputRead=context===outputContext;
@@ -123,9 +138,10 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     if(path==='/api/commands'&&method==='POST'){const result=commands.submit(await readJson(request),context?.token);return json(result,result.duplicate?200:202);}
     if(path==='/api/commands'&&method==='GET')return json(commands.state(actor,url.searchParams.get('projectId')));
     if(path.startsWith('/api/commands/')){const id=decodeURIComponent(path.slice('/api/commands/'.length).replace(/\/cancel$/,''));if(method==='POST'&&path.endsWith('/cancel'))return json(commands.cancel(actor,id));if(method==='GET')return json(commands.get(actor,id));}
+    if(path==='/api/clocks'&&method==='GET'){const projectId=url.searchParams.get('projectId');readProject(actor,projectId);return json(clocks.snapshot(projectId));}
     if(path==='/api/projects'&&method==='GET')return json(db.prepare('SELECT id,name,revision,updated_at FROM projects ORDER BY updated_at DESC').all().filter(p=>canAccess(actor,p.id)));
     if(path==='/api/projects'&&method==='POST'){
-      const data=await readJson(request),project=validateProject(data.project),stamp=now();commands.assertIdle(project.id);
+      const data=await readJson(request),project=clocks.project(validateProject(data.project)),stamp=now();commands.assertIdle(project.id);
       const current=actorFor(context),previous=db.prepare('SELECT document FROM projects WHERE id=?').get(project.id);
       if(previous)requireWorkspace(current,project.id);
       checkProjectChanges(current,previous?JSON.parse(previous.document):null,project,requirePermission);validateAssets(current,project);
@@ -150,9 +166,9 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     if(path.startsWith('/api/projects/')&&method==='GET'){
       const id=decodeURIComponent(path.slice('/api/projects/'.length)),row=readProject(actor,id);
       if(!row)throw new ServiceError('Project not found.',404);
-      settings.set('lastProject:'+actor.user.id,id);return json({project:JSON.parse(row.document),revision:row.revision});
+      settings.set('lastProject:'+actor.user.id,id);return json({project:row.project,revision:row.revision});
     }
-    if(path==='/api/program'&&method==='GET'){if(actor)requirePermission(actor,'outputs.view');return json(!program||outputRead||canAccess(actor,program.projectId)?program:null);}
+    if(path==='/api/program'&&method==='GET'){if(actor)requirePermission(actor,'outputs.view');return json(!program||outputRead||canAccess(actor,program.projectId)?liveProgram():null);}
     if(path==='/api/program'&&method==='POST')return json(await publishCommand(await readJson(request),context));
     if(path==='/api/assets'&&method==='POST'){
       requirePermission(actor,'graphics.edit');const bytes=await readBytes(request,10000000),mime=imageMime(bytes),id=randomUUID(),name=(request.headers.get('x-file-name')||'Image').slice(0,250);const current=actorFor(context);requirePermission(current,'graphics.edit');
@@ -214,9 +230,9 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     authorize(token,permission){const actor=authenticate(token);if(permission)requirePermission(actor,permission);return actor;},
     health(){try{return Number.isInteger(db.prepare('PRAGMA schema_version').get().schema_version);}catch{return false;}},
     async handle(request,context){try{return await route(request,context);}catch(e){const status=e instanceof ServiceError?e.status:e?.issues?400:500;if(status>=500)event('SERVICE_ERROR','failed');return json({error:e instanceof ServiceError?e.message:e?.issues?'Project validation failed. Existing data was preserved.':'The local service could not complete the operation.'},status);}},
-    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:3,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
+    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:4,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
     exportProject(raw,token){
-      const actor=authenticate(token);requirePermission(actor,'templates.export');const project=validateProject(raw),assets=[],missing=[];
+      const actor=authenticate(token);requirePermission(actor,'templates.export');const project=clocks.project(validateProject(raw)),assets=[],missing=[];
       if(db.prepare('SELECT id FROM projects WHERE id=?').get(project.id))requireWorkspace(actor,project.id);else requirePermission(actor,'projects.create');validateAssets(actor,project);
       for(const id of assetIds(project)){const a=db.prepare('SELECT id,name,mime,bytes FROM assets WHERE id=?').get(id);if(a)assets.push({...a,bytes:Buffer.from(a.bytes).toString('base64')});else missing.push(id);}
       if(missing.length)throw new ServiceError('Cannot export a complete project: '+missing.length+' image(s) are missing. Replace or upload them first.');
@@ -251,6 +267,6 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
         const project=validateProject(JSON.parse(text));project.id=randomUUID();project.name=project.name.slice(0,135)+' (imported)';db.exec('COMMIT');record('IMPORT',project.id,'success',actor);return project;
       }catch(e){db.exec('ROLLBACK');throw e;}
     },
-    close(){commands.close();audit('APPLICATION_STOP','local','success');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.close();}
+    close(){commands.close();clocks.close();audit('APPLICATION_STOP','local','success');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.close();}
   };
 }

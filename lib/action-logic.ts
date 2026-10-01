@@ -1,3 +1,4 @@
+import {parseSportOperation} from './sports-logic.ts';
 import type {Action,ActionCondition,Project} from './studio-model.ts';
 export function checkCondition(when:ActionCondition,variables:Project['variables']):void{
  for(const rule of when.rules){if(!Object.hasOwn(variables,rule.variable))throw Error('Condition variable is missing: '+(rule.variable||'(choose a variable)'));const current=variables[rule.variable];if(['truthy','falsy'].includes(rule.operator))continue;if(rule.value===undefined||typeof current!==typeof rule.value)throw Error('Condition value must match the type of '+rule.variable+'.');if(['gt','gte','lt','lte'].includes(rule.operator)&&typeof current!=='number')throw Error('Ordered comparisons require a number: '+rule.variable);}
@@ -10,7 +11,9 @@ export type PlannedAction={action:Action;path:string;end:number};
 export function planActions(project:Project,actions:Action[]):PlannedAction[]{
  const result:PlannedAction[]=[];
  function visit(items:Action[],stack:string[],path:string){for(const a of items){if(result.length>=200)throw Error('A run supports at most 200 expanded steps.');if(a.when)checkCondition(a.when,project.variables);else if(a.condition.trim()&&!Object.hasOwn(project.variables,a.condition.split('=')[0].trim()))throw Error('Condition variable is missing.');
-  if(['set','increment'].includes(a.type)){if(!Object.hasOwn(project.variables,a.target))throw Error('Action refers to a missing variable: '+(a.target||'(choose a variable)'));if(a.type==='increment'&&typeof project.variables[a.target]!=='number')throw Error('Increment requires a numeric variable.');}
+  if(a.type==='sport')parseSportOperation(JSON.parse(a.value));
+  if(a.type==='clock'){const options=JSON.parse(a.value);if(!['start','pause','reset','adjust'].includes(options.op))throw Error('Choose a clock operation.');}
+  if(['set','increment','counter','clock'].includes(a.type)){if(!Object.hasOwn(project.variables,a.target))throw Error('Action refers to a missing variable: '+(a.target||'(choose a variable)'));if(a.type==='increment'&&typeof project.variables[a.target]!=='number')throw Error('Increment requires a numeric variable.');}
   if(a.type==='preview'&&!project.scenes.some(s=>s.id===a.target))throw Error('Action refers to a missing graphic.');
   if(a.type==='fetch'&&!project.sources.some(s=>s.id===a.target&&s.url))throw Error('Action API source is missing or has no endpoint.');
   for(const m of a.value.matchAll(/\{\{\s*([\w.-]+)\s*\}\}/g))if(!Object.hasOwn(project.variables,m[1]))throw Error('Action template variable is missing: '+m[1]);

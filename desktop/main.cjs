@@ -99,7 +99,7 @@ function registerIpc(){
     else throw new ServiceError('Unknown account operation.',400);
     return {ok:true,value};
   }catch(error){return{ok:false,status:error.status||500,error:error instanceof ServiceError?error.message:'The local account operation failed.'};}});
-  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local actions, logic and macros',...status()};});
+  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local sports and esports workflows',...status()};});
   ipc('status',()=>{authorize();return status();});ipc('settings',()=>{authorize();return settings();});
   ipc('saveSettings',value=>{
     authorize('system.configure');
