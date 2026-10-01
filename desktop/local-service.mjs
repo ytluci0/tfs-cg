@@ -2,11 +2,13 @@ import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {mkdirSync} from 'node:fs';
 import {join} from 'node:path';
-import {validateProject,sceneSchema,variablesSchema,sourceSchema} from '../lib/studio-model.ts';
+import {validateProject,sceneSchema,variablesSchema,sourceSchema,variableActionValue,textValue,applyDataBindings,action} from '../lib/studio-model.ts';
 
 import {ServiceError} from './service-error.mjs';
 export {ServiceError} from './service-error.mjs';
 import {createSecurity,migrateSecurity} from './security.mjs';
+import {planActions} from '../lib/action-logic.ts';
+import {createCommandEngine,migrateCommands} from './command-engine.mjs';
 import {checkProjectChanges,checkVariables} from './project-policy.mjs';
 const json=(value,status=200)=>Response.json(value,{status,headers:{'Cache-Control':'no-store'}});
 async function readBytes(request,limit){
@@ -32,7 +34,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const db=new DatabaseSync(join(directory,'broadcastcg.sqlite'));
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version>2){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
+  if(version>3){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
   if(version===0)db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,document TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE assets(id TEXT PRIMARY KEY,name TEXT NOT NULL,mime TEXT NOT NULL,bytes BLOB NOT NULL);
@@ -42,6 +44,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     CREATE TABLE events(id INTEGER PRIMARY KEY AUTOINCREMENT,time INTEGER NOT NULL,action TEXT NOT NULL,target TEXT NOT NULL,status TEXT NOT NULL,detail TEXT NOT NULL);
     PRAGMA user_version=1; COMMIT;`);
   migrateSecurity(db,directory,version===1);
+  migrateCommands(db,directory,version===2);
   const security=createSecurity({db,now,workstation,event}),{auth,authenticate,requirePermission,requireWorkspace,canAccess,record}=security;
   const outputContext=Object.freeze({output:true});
   function actorFor(context){return authenticate(context?.token);}
@@ -53,6 +56,63 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const audit=(action,target,status,detail='')=>{db.prepare('INSERT INTO events(time,action,target,status,detail) VALUES(?,?,?,?,?)').run(Date.now(),action,target,status,detail);event(action,status);};
   const settings={get(key,fallback=null){const row=db.prepare('SELECT document FROM settings WHERE key=?').get(key);return row?JSON.parse(row.document):fallback;},set(key,value){db.prepare('INSERT INTO settings(key,document) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET document=excluded.document').run(key,JSON.stringify(value));}};
   audit('APPLICATION_START','local','success');
+  function commitActionProject(actor,next){
+    const old=readProject(actor,next.id);checkProjectChanges(actor,old.project,next,requirePermission);validateProject(next);validateAssets(actor,next);
+    db.exec('BEGIN IMMEDIATE');try{const revision=old.revision+1;db.prepare('UPDATE projects SET document=?,revision=?,updated_at=? WHERE id=?').run(JSON.stringify(next),revision,now(),next.id);
+      for(const key of Object.keys(next.variables))if(old.project.variables[key]!==next.variables[key])record('VARIABLE_CHANGED',key,'success',actor,{projectId:next.id,previous:old.project.variables[key]??null,next:next.variables[key]});
+      db.prepare('DELETE FROM project_assets WHERE project_id=?').run(next.id);for(const id of assetIds(next))db.prepare('INSERT INTO project_assets(project_id,asset_id) VALUES(?,?)').run(next.id,id);db.exec('COMMIT');return{project:next,revision};
+    }catch(e){db.exec('ROLLBACK');throw e;}
+  }
+  function stageSnapshot(value,project,actor){if(!value)return null;const scene=sceneSchema.parse(value.scene),variables=variablesSchema.parse(value.variables);const canonical=project.scenes.find(s=>s.id===scene.id);if(!canonical||JSON.stringify(canonical)!==JSON.stringify(scene))throw new ServiceError('Save and stage the latest graphic before running.',409);checkVariables(actor,project,variables,requirePermission);return{scene,variables};}
+  const commands=createCommandEngine({db,authenticate,requirePermission,requireWorkspace,readProject,record,now,
+    prepare(data,project,actor){
+      let actions,label,output=null;
+      if(data.kind==='control'){const panel=project.panels.find(p=>p.id===data.panelId),control=panel?.controls.find(c=>c.id===data.controlId);if(!control)throw new ServiceError('Control no longer exists.',404);if(control.hidden)throw new ServiceError('This control is hidden from operation.',403);actions=control.actions;label=control.label;}
+      else if(data.kind==='macro'){const macro=project.macros?.find(m=>m.id===data.macroId);if(!macro)throw new ServiceError('Macro no longer exists.',404);actions=macro.actions;label=macro.name;}
+      else if(data.kind==='output'){if(!['show','hide','update'].includes(data.output?.mode))throw new ServiceError('Choose a supported output command.');output=data.output;actions=[action(output.mode==='hide'?'clear':output.mode==='update'?'update':'take')];label=output.mode==='show'?'TAKE':output.mode==='hide'?'Hide output':'Update live';}
+      else throw new ServiceError('Choose a control, macro or output command.');
+      let plan;try{plan=planActions(project,actions);}catch(e){throw new ServiceError(e.message);}
+      for(const entry of plan){const a=entry.action,permission={take:'graphics.take',clear:'graphics.clear',update:'graphics.updateLive',fetch:'data.fetch'}[a.type];if(permission)requirePermission(actor,permission);}
+      if(publishing&&plan.some(s=>['take','clear','update'].includes(s.action.type)))throw new ServiceError('An output command is awaiting acknowledgement.',409);
+      const stage=stageSnapshot(data.stage,project,actor);if(output?.mode!=='hide'&&output)stageSnapshot(output,project,actor);
+      return{plan,label,stage,output,usesOutput:plan.some(s=>['take','clear','update'].includes(s.action.type))};
+    },
+    async execute(a,ctx){
+      const current=()=>{if(ctx.signal.aborted)throw new ServiceError('Sequence cancelled.',409);const actor=authenticate(ctx.token);requireWorkspace(actor,ctx.projectId);return{actor,project:readProject(actor,ctx.projectId).project};};
+      let {actor,project}=current();const value=textValue(a.value,project.variables);
+      if(a.type==='set'||a.type==='increment'){let next;try{next=variableActionValue(project.variables,a.target,value,a.type);}catch(e){throw new ServiceError(e.message);}commitActionProject(actor,{...project,variables:{...project.variables,[a.target]:next}});}
+      else if(a.type==='preview'){const scene=project.scenes.find(s=>s.id===a.target);ctx.setStage({scene:structuredClone(scene),variables:{...project.variables}});}
+      else if(['take','clear','update'].includes(a.type)){
+        if(a.type==='clear'&&program?.projectId&&program.projectId!==ctx.projectId)throw new ServiceError('Switch to the workspace currently on output before hiding it.',409);
+        let payload=ctx.output;if(!payload){if(a.type==='clear')payload={scene:null,variables:{},mode:'hide'};else if(a.type==='take'){if(!ctx.stage)throw new ServiceError('Stage a graphic before TAKE.');payload={...ctx.stage,mode:'show'};}else{if(program?.projectId!==project.id||program.mode==='hide')throw new ServiceError('This workspace has no graphic on output.');const scene=project.scenes.find(s=>s.id===program.scene?.id);payload={scene,variables:project.variables,mode:'update'};}}
+        await publishCommand({...payload,projectId:project.id},{token:ctx.token},ctx.commandId);
+      }else if(a.type==='fetch'){
+        const source=project.sources.find(s=>s.id===a.target),response=await route(new Request('broadcastcg://app/api/sources/fetch',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source,projectId:project.id}),signal:ctx.signal}),{token:ctx.token});const result=await response.json();if(!response.ok)throw new ServiceError(result.error,response.status);
+        ({actor,project}=current());const applied=applyDataBindings(project,source.id,result.data);if(applied.missing)throw new ServiceError('API response did not match '+applied.missing+' binding(s). Data was not changed.');commitActionProject(actor,applied.project);
+      }
+    }
+  });
+
+
+  async function publishCommand(data,context,commandId){
+      commands.assertOutputFree(commandId);
+      if(publishing)throw new ServiceError('An output command is awaiting acknowledgement.',409);
+      const current=actorFor(context);const mode=['hide','update','show'].includes(data.mode)?data.mode:'show';
+      requirePermission(current,mode==='hide'?'graphics.clear':mode==='update'?'graphics.updateLive':'graphics.take');
+      const projectId=mode==='hide'&&program?program.projectId:data.projectId;const saved=readProject(current,projectId).project;
+      if(mode==='update'&&program?.projectId!==projectId)throw new ServiceError('Select the workspace currently on output.',409);
+      let scene=data.scene===null?null:sceneSchema.parse(data.scene),variables=variablesSchema.parse(data.variables||{}),startedAt=Date.now();
+      if(mode==='hide'&&program){scene=program.scene;variables=program.variables;}
+      if(mode==='update'&&program?.scene?.id===scene?.id)startedAt=program.startedAt;
+      if(mode!=='hide'){const canonical=saved.scenes.find(s=>s.id===scene?.id);if(!canonical||JSON.stringify(canonical)!==JSON.stringify(scene))throw new ServiceError('Save this graphic before sending it to output.',409);checkVariables(current,saved,variables,requirePermission);}
+      beforePublish();publishing=true;
+      try{
+        program={scene,variables,mode,startedAt,revision:randomUUID(),projectId,acknowledged:false};
+        await confirmProgram(program);program.acknowledged=true;
+        record(mode.toUpperCase(),scene?.id||'program','acknowledged',current,{projectId});return program;
+      }catch(e){e.unconfirmed=true;record(mode.toUpperCase(),scene?.id||'program','unconfirmed',current,{projectId});throw e;}
+      finally{publishing=false;}
+    }
 
   async function route(request,context){
     const url=new URL(request.url),path=url.pathname,method=request.method;
@@ -60,9 +120,12 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     if(outputRead&&(method!=='GET'||!(path==='/api/program'||path.startsWith('/api/assets/'))))throw new ServiceError('Output is read-only.',403);
     const actor=outputRead?null:actorFor(context);
     if(actor)requirePermission(actor,'projects.view');
+    if(path==='/api/commands'&&method==='POST'){const result=commands.submit(await readJson(request),context?.token);return json(result,result.duplicate?200:202);}
+    if(path==='/api/commands'&&method==='GET')return json(commands.state(actor,url.searchParams.get('projectId')));
+    if(path.startsWith('/api/commands/')){const id=decodeURIComponent(path.slice('/api/commands/'.length).replace(/\/cancel$/,''));if(method==='POST'&&path.endsWith('/cancel'))return json(commands.cancel(actor,id));if(method==='GET')return json(commands.get(actor,id));}
     if(path==='/api/projects'&&method==='GET')return json(db.prepare('SELECT id,name,revision,updated_at FROM projects ORDER BY updated_at DESC').all().filter(p=>canAccess(actor,p.id)));
     if(path==='/api/projects'&&method==='POST'){
-      const data=await readJson(request),project=validateProject(data.project),stamp=now();
+      const data=await readJson(request),project=validateProject(data.project),stamp=now();commands.assertIdle(project.id);
       const current=actorFor(context),previous=db.prepare('SELECT document FROM projects WHERE id=?').get(project.id);
       if(previous)requireWorkspace(current,project.id);
       checkProjectChanges(current,previous?JSON.parse(previous.document):null,project,requirePermission);validateAssets(current,project);
@@ -90,25 +153,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       settings.set('lastProject:'+actor.user.id,id);return json({project:JSON.parse(row.document),revision:row.revision});
     }
     if(path==='/api/program'&&method==='GET'){if(actor)requirePermission(actor,'outputs.view');return json(!program||outputRead||canAccess(actor,program.projectId)?program:null);}
-    if(path==='/api/program'&&method==='POST'){
-      const data=await readJson(request);
-      if(publishing)throw new ServiceError('An output command is awaiting acknowledgement.',409);
-      const current=actorFor(context);const mode=['hide','update','show'].includes(data.mode)?data.mode:'show';
-      requirePermission(current,mode==='hide'?'graphics.clear':mode==='update'?'graphics.updateLive':'graphics.take');
-      const projectId=mode==='hide'&&program?program.projectId:data.projectId;const saved=readProject(current,projectId).project;
-      if(mode==='update'&&program?.projectId!==projectId)throw new ServiceError('Select the workspace currently on output.',409);
-      let scene=data.scene===null?null:sceneSchema.parse(data.scene),variables=variablesSchema.parse(data.variables||{}),startedAt=Date.now();
-      if(mode==='hide'&&program){scene=program.scene;variables=program.variables;}
-      if(mode==='update'&&program?.scene?.id===scene?.id)startedAt=program.startedAt;
-      if(mode!=='hide'){const canonical=saved.scenes.find(s=>s.id===scene?.id);if(!canonical||JSON.stringify(canonical)!==JSON.stringify(scene))throw new ServiceError('Save this graphic before sending it to output.',409);checkVariables(current,saved,variables,requirePermission);}
-      beforePublish();publishing=true;
-      try{
-        program={scene,variables,mode,startedAt,revision:randomUUID(),projectId};
-        await confirmProgram(program);
-        record(mode.toUpperCase(),scene?.id||'program','acknowledged',current,{projectId});return json(program);
-      }catch(e){record(mode.toUpperCase(),scene?.id||'program','unconfirmed',current,{projectId});throw e;}
-      finally{publishing=false;}
-    }
+    if(path==='/api/program'&&method==='POST')return json(await publishCommand(await readJson(request),context));
     if(path==='/api/assets'&&method==='POST'){
       requirePermission(actor,'graphics.edit');const bytes=await readBytes(request,10000000),mime=imageMime(bytes),id=randomUUID(),name=(request.headers.get('x-file-name')||'Image').slice(0,250);const current=actorFor(context);requirePermission(current,'graphics.edit');
       db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,name,mime,bytes,current.user.id);
@@ -141,7 +186,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       const row=db.prepare('SELECT ciphertext FROM project_secrets WHERE project_id=? AND source_id=?').get(projectId,source.id);
       const headers=new Headers(row?JSON.parse(decrypt(Buffer.from(row.ciphertext))):{});if(!headers.has('Accept'))headers.set('Accept','application/json');
       try{
-        const response=await fetch(endpoint,{headers,redirect:'error',signal:AbortSignal.timeout(10000)});
+        const response=await fetch(endpoint,{headers,redirect:'error',signal:AbortSignal.any([AbortSignal.timeout(10000),request.signal])});
         if(!response.ok)throw new ServiceError('Data feed returned HTTP '+response.status+'.',502);
         const data=JSON.parse((await readBytes(response,2000000)).toString('utf8'));
         actorFor(context);record('DATA_FETCH',source.id,'success',current,{projectId});return json({data,fetchedAt:Date.now()});
@@ -169,7 +214,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     authorize(token,permission){const actor=authenticate(token);if(permission)requirePermission(actor,permission);return actor;},
     health(){try{return Number.isInteger(db.prepare('PRAGMA schema_version').get().schema_version);}catch{return false;}},
     async handle(request,context){try{return await route(request,context);}catch(e){const status=e instanceof ServiceError?e.status:e?.issues?400:500;if(status>=500)event('SERVICE_ERROR','failed');return json({error:e instanceof ServiceError?e.message:e?.issues?'Project validation failed. Existing data was preserved.':'The local service could not complete the operation.'},status);}},
-    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:2,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
+    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:3,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
     exportProject(raw,token){
       const actor=authenticate(token);requirePermission(actor,'templates.export');const project=validateProject(raw),assets=[],missing=[];
       if(db.prepare('SELECT id FROM projects WHERE id=?').get(project.id))requireWorkspace(actor,project.id);else requirePermission(actor,'projects.create');validateAssets(actor,project);
@@ -206,6 +251,6 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
         const project=validateProject(JSON.parse(text));project.id=randomUUID();project.name=project.name.slice(0,135)+' (imported)';db.exec('COMMIT');record('IMPORT',project.id,'success',actor);return project;
       }catch(e){db.exec('ROLLBACK');throw e;}
     },
-    close(){audit('APPLICATION_STOP','local','success');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.close();}
+    close(){commands.close();audit('APPLICATION_STOP','local','success');db.exec('PRAGMA wal_checkpoint(TRUNCATE)');db.close();}
   };
 }

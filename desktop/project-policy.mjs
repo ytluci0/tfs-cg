@@ -7,6 +7,7 @@ export function exposedVariables(project){
   if(panel.type==='football'||panel.controls.some(c=>['pitch','bench','scoreboard'].includes(c.kind)))Object.keys(footballTypes).forEach(k=>names.add(k));
   for(const c of panel.controls){if(c.variable)names.add(c.variable);Object.values(c.dataFields||{}).forEach(k=>names.add(k));for(const a of c.actions)if(['set','increment'].includes(a.type)&&a.target)names.add(a.target);}
  }
+ for(const macro of project.macros||[])for(const a of macro.actions)if(['set','increment'].includes(a.type)&&a.target)names.add(a.target);
  for(const b of project.bindings)if(b.destination==='variable'&&b.targetVariable)names.add(b.targetVariable);
  return names;
 }
@@ -26,7 +27,7 @@ export function checkProjectChanges(actor,old,next,requirePermission){
  if(!old){check('projects.create');check('graphics.create');check('panels.create');if(next.sources.length||next.bindings.length)check('data.configure');return;}
  if(old.name!==next.name)check('projects.edit');
  if(!same(old.sources,next.sources)||!same(old.bindings,next.bindings))check('data.configure');
- if(!same(old.formations,next.formations)||!same(old.toolPresets,next.toolPresets)||!same(old.panelComponents,next.panelComponents))check('panels.edit');
+ if(!same(old.formations,next.formations)||!same(old.toolPresets,next.toolPresets)||!same(old.panelComponents,next.panelComponents)||!same(old.macros,next.macros))check('panels.edit');
  for(const [key,prefix] of [['scenes','graphics'],['panels','panels']]){
   const before=new Map(old[key].map(v=>[v.id,v])),after=new Map(next[key].map(v=>[v.id,v]));
   if(after.size!==next[key].length||before.size!==old[key].length)throw new ServiceError('Duplicate scene or panel identifiers are not supported.');

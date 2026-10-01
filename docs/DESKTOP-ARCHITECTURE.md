@@ -85,14 +85,14 @@ Installer scaffolding, basic window recovery, diagnostic export and image-contai
 ## 9. Risks and explicit limits
 
 - Local account permissions are implemented. No network endpoint or shared multi-user service is enabled; Windows file access remains the outer trust boundary.
-- Existing clock and action loops still live in React; they do not yet survive closing the app or synchronize across PCs. No multi-client network mode is enabled.
+- Desktop action sequences now execute in the local service and survive renderer reload. Application restart interrupts pending sequences without replay. Sports clock widgets remain renderer-owned until phase 5; no multi-client network mode is enabled.
 - Native output uses Chromium/SVG and wall-clock timing. It is not a qualified broadcast output engine or an After Effects/Photoshop replacement.
 - Images embedded in `.broadcastproject` move with projects. Fonts, videos, arbitrary plugins, remote URLs and credentials do not. Missing local images block import/export. External dependencies are shown during import.
 - Recovery snapshots are debounced and bounded; a crash may lose the last fraction of a second of editing. Restoring a stale draft creates a copy instead of overwriting newer saved data. Program is intentionally not restored.
 - Current application preferences include identity, UI scale and startup; unimplemented integration/settings categories are not presented as working controls.
 - Installer is unsigned until a signing identity is supplied. Windows trust/signing and full Windows 10/11, mixed-DPI, touch and monitor-removal qualification are release tasks. No automatic updater or telemetry is installed.
 - The original hosted source remains for migration reference but is excluded from the desktop runtime. Existing remote projects are not silently downloaded or deleted. Import supported local exports explicitly.
-- SQLite schema v2 migrates v1 transactionally after a consistent backup and rejects newer schemas. Downgrading in place is unsupported; keep the pre-upgrade backup.
+- SQLite schema v3 migrates earlier versions transactionally after consistent backups and rejects newer schemas. Downgrading in place is unsupported; keep the pre-upgrade backup.
 
 ## 10. Dependencies and release ownership
 
@@ -109,3 +109,5 @@ The real Electron smoke test runs an isolated data profile, loads the bundled re
 Phase 2 adds 12 security tests (35 total automated tests), including role/workspace denials, password changes and resets, disabled users, token rotation/revocation, idle/absolute expiry, endpoint credential isolation and v1 migration. Native Electron tests verify first-run setup, main-only tokens, temporary-password enforcement, Viewer write/settings denials, logout with continuing output, and the read-only output partition. UI screenshots are inspected during QA.
 
 Phase 3 (0.3.0) adds optional layoutVersion 2 metadata, multi-selection, groups, move/scale/alignment/distribution, snap/zoom, visibility and locks, project-scoped reusable component snapshots, configuration validation and 44 px touch operation. Old projects load without a schema migration; new metadata survives local persistence and project export. Eleven new model/policy tests bring the automated total to 46. Native Electron tests additionally exercise pointer gestures, keyboard undo/redo, group locks, component variables, touch bounds, validation and save/reopen. A live clock no longer starves autosave. See [panel builder guide](PANEL-BUILDER.md) for controls and limits.
+
+Phase 4 (0.4.0) moves desktop action sequences and transport output commands into a journaled local command service. It adds reusable nested macros, typed AND/OR conditions, monotonic timed waits, cancellation, per-workspace execution ownership and output reservation, session revalidation, persisted step outcomes and replay protection. Schema 3 backs up schema-2 data before adding the command journal. Seventeen new command/logic tests bring the automated total to 63. Native tests author and run a macro, use typed condition dropdowns, verify TAKE acknowledgement, reload during a wait without duplicate execution, and cancel pending steps. See [actions and macros](ACTIONS-AND-MACROS.md).
