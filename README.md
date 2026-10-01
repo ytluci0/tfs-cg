@@ -2,7 +2,7 @@
 
 BroadcastCG has a local Electron desktop build using the existing graphics editor, animation tools, panel builder and sports/esports controls. It runs without ChatGPT, Cloudflare, a browser, a localhost web server or an internet connection. External feeds/images require a connection only when configured by the operator.
 
-Version **0.2.0 completes phase 2: local accounts and permissions**. It adds administrator setup, sign-in, user management, role/permission overrides, workspace assignments, session revocation and audit history. Multi-operator networking, PSD/AE import, SDI/NDI and hardware integration remain later phases. See [architecture and phased plan](docs/DESKTOP-ARCHITECTURE.md).
+Version **0.3.0 adds phase 3: panel builder tools**. It adds multi-selection, group movement/resizing, alignment, snap, layers/locks, reusable control components, touch sizing and validation. Phase 2 local accounts and permissions are retained. Multi-operator networking, PSD/AE import, SDI/NDI and hardware integration remain later phases. See [architecture and phased plan](docs/DESKTOP-ARCHITECTURE.md).
 
 ## Windows release
 
@@ -13,7 +13,7 @@ The assisted installer supports installation-directory selection, Start menu int
 - **First launch:** create your own administrator username and passphrase (15–128 characters). There is no default password.
 - **Accounts & access:** add local users, assign workspaces and roles, reset passwords, revoke sessions and filter audit history. Newly created users must change their temporary password. Click your name to change your own password.
 - **Design / Animate:** use the existing layer editor and keyframes; drop PNG/JPEG/WebP files from Explorer onto the design canvas.
-- **Panels:** open Tool library for sports/esports presets, or use individual controls and Formation studio.
+- **Panels → Build:** open Tool library for sports/esports presets, arrange controls, Shift-click to select several, group/align/resize them and save selections in Components. Choose Touch operation for larger targets. Validate checks connections before Operate. Read the [panel builder guide](docs/PANEL-BUILDER.md).
 - **Open output:** opens a native graphics window. Use the Output menu to select a monitor and F11 for fullscreen. TAKE requires this output to be available and acknowledge the scene update.
 - **Export / Import:** native Windows dialogs read/write `.broadcastproject`, including local images. Previous `.frame.json` projects can be imported if their referenced images are available. Missing local media blocks import; external dependencies are reported.
 - **System:** workstation identity, UI scale, Windows startup, display selection, measured local status and diagnostic export.

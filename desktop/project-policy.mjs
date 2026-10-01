@@ -26,7 +26,7 @@ export function checkProjectChanges(actor,old,next,requirePermission){
  if(!old){check('projects.create');check('graphics.create');check('panels.create');if(next.sources.length||next.bindings.length)check('data.configure');return;}
  if(old.name!==next.name)check('projects.edit');
  if(!same(old.sources,next.sources)||!same(old.bindings,next.bindings))check('data.configure');
- if(!same(old.formations,next.formations)||!same(old.toolPresets,next.toolPresets))check('panels.edit');
+ if(!same(old.formations,next.formations)||!same(old.toolPresets,next.toolPresets)||!same(old.panelComponents,next.panelComponents))check('panels.edit');
  for(const [key,prefix] of [['scenes','graphics'],['panels','panels']]){
   const before=new Map(old[key].map(v=>[v.id,v])),after=new Map(next[key].map(v=>[v.id,v]));
   if(after.size!==next[key].length||before.size!==old[key].length)throw new ServiceError('Duplicate scene or panel identifiers are not supported.');

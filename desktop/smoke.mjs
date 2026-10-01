@@ -3,6 +3,7 @@ import {writeFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
+import {panelSmoke} from './panel-smoke.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await sleep(100);}throw Error('Renderer readiness timed out.');}
 export async function run({app,studio,openOutput,getOutput,service,directory}){
@@ -20,6 +21,7 @@ export async function run({app,studio,openOutput,getOutput,service,directory}){
  const layout=await js(`(()=>{const c=document.querySelector('.canvas-area .canvas-stage').getBoundingClientRect(),a=document.querySelector('.canvas-area').getBoundingClientRect();return {height:c.height,contained:c.top>=a.top&&c.bottom<=a.bottom+1&&c.left>=a.left&&c.right<=a.right+1};})()`);
  assert.ok(layout.height>200&&layout.contained,JSON.stringify(layout));
  const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
+ await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  const command={projectId:p.id,scene:p.scenes[0],variables:p.variables,mode:'show'};
  assert.equal((await api('/api/program',command)).status,503);openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());
  const take=await api('/api/program',command);assert.equal(take.status,200,JSON.stringify(take));
