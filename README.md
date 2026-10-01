@@ -15,3 +15,5 @@ Phase 8 LAN production, PSD import and supported AE conversion remain available.
 Version 0.13 adds responsive graphic layouts, API row templates, linked graphic components, curved vectors, gradient stops and group transforms; local video/ticker/countdown layers; configurable card/drop/tab widgets; visual action flows with preflighted failure macros; function-key, MIDI and gamepad mappings. See [Production tools](docs/PRODUCTION-TOOLS.md) for controls, limits and qualification details.
 
 PSD import in 0.13.1 supports source files up to 2 GB, with memory preflight, a 1 GB declared pixel budget, a three-minute cancellable inspection, and readable error messages. See [PSD import](docs/PSD-IMPORT.md).
+
+Version **0.14.0** adds expandable property tracks in Animate: stopwatch/key controls, inline values, multi-track key dragging, copy/paste, easing curves, frame snapping, zoom and timeline resizing. See the [animation timeline guide](docs/ANIMATION-TIMELINE.md).

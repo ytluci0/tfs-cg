@@ -4,6 +4,7 @@ import {randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
 import {productionSmoke} from './production-smoke.mjs';
+import {timelineSmoke} from './timeline-smoke.mjs';
 import {creativeSmoke} from './creative-smoke.mjs';
 import {panelSmoke} from './panel-smoke.mjs';
 import {aeSmoke} from './ae-smoke.mjs';
@@ -33,6 +34,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
  await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
+ await timelineSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await productionSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
  const command={projectId:p.id,scene:p.scenes[0],variables:p.variables,mode:'show'};
  assert.equal((await api('/api/program',command)).status,503);openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());
