@@ -53,7 +53,7 @@ export function ControlSurface({panel,building,selected,onSelect,onCommit,onDele
   }}>
   {shown.controls.map((c,index)=>{
    if(c.hidden&&!building)return null;const b=controlBounds(shown,c,index),locked=isControlLocked(panel,c),group=panel.groups?.find(g=>g.id===c.groupId);
-   return <div key={c.id} tabIndex={building?0:undefined} role="group" aria-label={building?c.label+(group?' · '+group.name:'')+(locked?' · locked':''):undefined} data-control-id={c.id} data-selected={selected.includes(c.id)} className={'control-tile '+(building&&selected.includes(c.id)?'selected ':'')+(building&&c.hidden?'panel-item-hidden ':'')+(locked?'panel-item-locked':'')} style={{borderTopColor:c.color,...(panel.freeLayout?{position:'absolute',left:b.x,top:b.y,width:b.width,height:b.height}:{gridColumn:`span ${Math.min(c.span,panel.columns)}`})}}>
+   return <div key={c.id} tabIndex={building?0:undefined} role="group" aria-label={building?c.label+(group?' · '+group.name:'')+(locked?' · locked':''):undefined} data-control-id={c.id} data-selected={selected.includes(c.id)} className={'control-tile '+(c.artwork||c.kind==='artwork'?'art-control-tile ':'')+(building&&selected.includes(c.id)?'selected ':'')+(building&&c.hidden?'panel-item-hidden ':'')+(locked?'panel-item-locked':'')} style={{zIndex:"auto",borderTopColor:c.color,...(panel.freeLayout?{position:'absolute',left:b.x,top:b.y,width:b.width,height:b.height}:{gridColumn:`span ${Math.min(c.span,panel.columns)}`})}}>
     {children(c)}{building&&locked&&<span className="panel-lock-badge"><Lock size={12}/></span>}
    </div>;
   })}

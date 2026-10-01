@@ -3,8 +3,8 @@ import type {Control,Panel} from './studio-model';
 export type ControlBounds={x:number;y:number;width:number;height:number};
 export const panelSize=(panel:Panel)=>({width:panel.canvasWidth??960,height:panel.canvasHeight??540});
 export function clampControlBounds(bounds:ControlBounds,size:{width:number;height:number}):ControlBounds{
- const width=Math.max(80,Math.min(size.width,Math.round(bounds.width)));
- const height=Math.max(64,Math.min(size.height,Math.round(bounds.height)));
+ const width=Math.max(24,Math.min(size.width,Math.round(bounds.width)));
+ const height=Math.max(24,Math.min(size.height,Math.round(bounds.height)));
  return {width,height,x:Math.max(0,Math.min(size.width-width,Math.round(bounds.x))),y:Math.max(0,Math.min(size.height-height,Math.round(bounds.y)))};
 }
 export function controlBounds(panel:Panel,control:Control,index:number):ControlBounds{

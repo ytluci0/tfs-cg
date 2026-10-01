@@ -18,7 +18,7 @@ test('selection movement snaps its origin and clamps the whole group without com
 });
 test('selection scaling respects every control minimum, canvas edges and proportional resizing',()=>{
  const p=fixture().panels[0],tiny=resizeSelection(p,['a','b'],1,1);
- assert.deepEqual(bounds(tiny.controls[0]),{x:80,y:80,width:80,height:64});assert.equal(bounds(tiny.controls[1]).x,200);
+ assert.deepEqual(bounds(tiny.controls[0]),{x:80,y:80,width:24,height:24});assert.equal(bounds(tiny.controls[1]).x,116);
  const big=resizeSelection(p,['a','b'],9999,9999);for(const c of big.controls.slice(0,2)){const b=bounds(c);assert.ok(b.x+b.width<=960&&b.y+b.height<=540);}
  const doubled=resizeSelection(p,['a','b'],800,400,true);assert.equal(bounds(doubled.controls[0]).width,320);assert.equal(bounds(doubled.controls[0]).height,256);assert.equal(bounds(doubled.controls[1]).x,560);
 });

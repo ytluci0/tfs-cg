@@ -1,0 +1,11 @@
+import {z} from 'zod';
+export const artStates=['normal','hover','pressed','live','disabled'] as const;
+export type ArtState=typeof artStates[number];
+const coordinate=z.number().finite().min(-2000).max(4000);
+export const artStyleSchema=z.object({x:coordinate,y:coordinate,width:z.number().min(1).max(4000),height:z.number().min(1).max(4000),rotation:z.number().min(-3600).max(3600),opacity:z.number().min(0).max(1),visible:z.boolean(),fill:z.string().max(100),gradient:z.string().max(100),angle:z.number().min(-360).max(360),stroke:z.string().max(100),strokeWidth:z.number().min(0).max(100),radius:z.number().min(0).max(1000),text:z.string().max(2000),fontFamily:z.string().max(100),fontSize:z.number().min(1).max(500),fontWeight:z.number().min(100).max(900),align:z.enum(['left','center','right']),image:z.string().max(2000),imageFit:z.enum(['contain','cover','stretch'])});
+export const artPartSchema=artStyleSchema.extend({id:z.string().min(1).max(100),name:z.string().max(100),kind:z.enum(['rect','ellipse','text','image','line','polygon']),locked:z.boolean(),points:z.array(z.object({x:z.number().min(0).max(1),y:z.number().min(0).max(1)})).min(3).max(100).optional(),states:z.object({hover:artStyleSchema.partial().optional(),pressed:artStyleSchema.partial().optional(),live:artStyleSchema.partial().optional(),disabled:artStyleSchema.partial().optional()}).optional()});
+export const buttonArtSchema=z.object({width:z.number().min(24).max(2000),height:z.number().min(24).max(2000),fit:z.enum(['stretch','contain']),parts:z.array(artPartSchema).max(50)}).superRefine((art,ctx)=>{if(new Set(art.parts.map(p=>p.id)).size!==art.parts.length)ctx.addIssue({code:'custom',message:'Artwork layer IDs must be unique.'});});
+export type ButtonArt=z.infer<typeof buttonArtSchema>;
+export type ArtPart=z.infer<typeof artPartSchema>;
+export type ArtStyle=z.infer<typeof artStyleSchema>;
+export const playerControlSchema=z.object({team:z.enum(['home','away']),source:z.enum(['slot','bench','player']),slot:z.number().int().min(1).max(200),playerId:z.string().max(100).optional(),fieldId:z.string().max(100).optional()});

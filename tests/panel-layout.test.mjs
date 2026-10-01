@@ -19,7 +19,7 @@ test('shrinking a canvas keeps controls visible and usable',()=>{
  panel.controls[0].placement={x:800,y:400,width:150,height:100};
  const resized=resizePanel(panel,{width:320,height:160});
  assert.deepEqual(resized.controls[0].placement,{x:170,y:60,width:150,height:100});
- assert.deepEqual(clampControlBounds({x:-10,y:999,width:1,height:1},{width:320,height:160}),{x:0,y:96,width:80,height:64});
+ assert.deepEqual(clampControlBounds({x:-10,y:999,width:1,height:1},{width:320,height:160}),{x:0,y:136,width:24,height:24});
 });
 test('new or duplicated controls get a vacant location without overwriting existing placement',()=>{
  const panel=arrangePanel(defaultProject().panels[0]);

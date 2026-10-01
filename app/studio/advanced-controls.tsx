@@ -1,27 +1,28 @@
 'use client';
+import {ButtonArtwork} from './button-artwork';
 import {useEffect,useRef,useState} from 'react';
 import {Input} from '@/components/ui/input';
 import {controlActions,controlCondition,selectorOptions,type ControlEvent} from '@/lib/creative-tools';
 import {safeImage,textValue,type Control,type Project} from '@/lib/studio-model';
 
 type Run=(c:Control,event?:ControlEvent,value?:string)=>Promise<void>;
-export function ActionButton({control:c,project,disabled,run,onError}:{control:Control;project:Project;disabled:boolean;run:Run;onError:(e:unknown)=>void}){
- const [pressed,setPressed]=useState(false),[working,setWorking]=useState(false),timer=useRef<ReturnType<typeof setTimeout>|null>(null),down=useRef(false),held=useRef(false),mounted=useRef(true),pending=useRef(Promise.resolve()),failed=useRef(false),latest=useRef({c,run,onError});latest.current={c,run,onError};
+export function ActionButton({control:c,project,disabled,run,onError,preview=false,onEmptyClick}:{control:Control;project:Project;disabled:boolean;run:Run;onError:(e:unknown)=>void;preview?:boolean;onEmptyClick?:()=>void}){
+ const [hover,setHover]=useState(false),[pressed,setPressed]=useState(false),[working,setWorking]=useState(false),timer=useRef<ReturnType<typeof setTimeout>|null>(null),down=useRef(false),held=useRef(false),mounted=useRef(true),pending=useRef(Promise.resolve()),failed=useRef(false),latest=useRef({c,run,onError});latest.current={c,run,onError};
  useEffect(()=>{mounted.current=true;const cancel=()=>{down.current=false;setPressed(false);if(timer.current)clearTimeout(timer.current);};window.addEventListener('blur',cancel);return()=>{mounted.current=false;cancel();window.removeEventListener('blur',cancel);};},[]);
- const live=!!c.liveWhen&&controlCondition(c.liveWhen,project.variables),state=disabled&&!working?'disabled':pressed?'pressed':live?'live':'normal';
+ const live=!!c.liveWhen&&controlCondition(c.liveWhen,project.variables),state=preview?'normal':disabled&&!working?'disabled':pressed?'pressed':live?'live':hover?'hover':'normal';
  const style={background:c.color,foreground:'#ffffff',radius:8,fontSize:c.fontSize||18,borderWidth:0,borderColor:c.color,...c.appearance,...(state==='normal'?{}:c.stateStyles?.[state])};
  const value=(s:string|undefined)=>textValue(s||'',project.variables),image=value(style.image);
  function fire(event:ControlEvent){
-  const actions=controlActions(latest.current.c,event);if(!actions.length)return pending.current;
+  const actions=controlActions(latest.current.c,event);if(!actions.length){if(event==='click')onEmptyClick?.();return pending.current;}
   pending.current=pending.current.then(async()=>{if(!mounted.current||failed.current)return;setWorking(true);try{await latest.current.run(latest.current.c,event);}catch(e){failed.current=true;down.current=false;if(timer.current)clearTimeout(timer.current);latest.current.onError(e);}finally{if(mounted.current)setWorking(false);}});return pending.current;
  }
  function start(){if(disabled||down.current)return;failed.current=false;held.current=false;down.current=true;setPressed(true);void fire('press');if(c.events?.hold?.length){const repeat=async()=>{if(!down.current||!mounted.current||failed.current)return;held.current=true;await fire('hold');if(down.current&&!failed.current)timer.current=setTimeout(repeat,latest.current.c.holdRepeat||200);};timer.current=setTimeout(repeat,c.holdDelay||500);}}
  function stop(cancel=false){const was=down.current;down.current=false;setPressed(false);if(timer.current)clearTimeout(timer.current);if(was&&!cancel)void fire('release');if(cancel)held.current=true;}
- return <button className="control-build advanced-action-button" data-state={state} disabled={disabled&&!working&&!down.current} aria-label={value(style.label||c.label)} style={{alignItems:'center',justifyContent:'center',textAlign:'center',background:value(style.background),color:value(style.foreground),border:`${style.borderWidth||0}px solid ${value(style.borderColor)}`,borderRadius:style.radius,fontSize:style.fontSize,fontFamily:style.fontFamily,fontWeight:style.fontWeight||600,opacity:state==='disabled'&&!c.stateStyles?.disabled?.background?0.5:1}}
+ return <button className={"control-build advanced-action-button "+(c.artwork?"custom-art-button":"")} data-state={state} onPointerEnter={()=>setHover(true)} onPointerLeave={()=>setHover(false)} disabled={disabled&&!working&&!down.current} aria-label={value(style.label||c.label)} style={{alignItems:'center',justifyContent:'center',textAlign:'center',background:value(style.background),color:value(style.foreground),border:`${style.borderWidth||0}px solid ${value(style.borderColor)}`,borderRadius:style.radius,fontSize:style.fontSize,fontFamily:style.fontFamily,fontWeight:style.fontWeight||600,...(c.artwork?{background:'transparent',border:'none',borderRadius:0,padding:0}:{}),opacity:state==='disabled'&&!c.artwork&&!c.stateStyles?.disabled?.background?0.5:1}}
   onPointerDown={e=>{if(e.button!==0)return;e.currentTarget.setPointerCapture(e.pointerId);start();}} onPointerUp={e=>{stop();if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}} onPointerCancel={()=>stop(true)} onLostPointerCapture={()=>{if(down.current)stop(true);}}
   onKeyDown={e=>{if([' ','Enter'].includes(e.key)){e.preventDefault();if(!e.repeat)start();}}} onKeyUp={e=>{if([' ','Enter'].includes(e.key)){e.preventDefault();stop();if(!held.current)void fire('click');}}}
   onClick={e=>{if(disabled&&!working)return;if(e.detail===0){failed.current=false;void fire('click');}else if(!held.current)void fire('click');}}>
-  {safeImage(image)&&<img alt="" src={image}/>} {style.icon&&<span aria-hidden="true">{value(style.icon)}</span>}<strong style={{font:'inherit'}}>{value(style.label||c.label)}</strong><small>{working?'Running…':state==='live'?'Live':c.shortcut?'Shortcut '+c.shortcut.toUpperCase():controlActions(c).length+' actions'}</small>
+  {c.artwork?<ButtonArtwork art={c.artwork} variables={project.variables} state={state}/>:<>{safeImage(image)&&<img alt="" src={image}/>} {style.icon&&<span aria-hidden="true">{value(style.icon)}</span>}<strong style={{font:'inherit'}}>{value(style.label||c.label)}</strong><small>{working?'Running…':state==='live'?'Live':c.shortcut?'Shortcut '+c.shortcut.toUpperCase():controlActions(c).length+' actions'}</small></>}{c.artwork&&working&&<span className="art-running">Running…</span>}
  </button>;
 }
 export function DataSelector({control:c,project,disabled,run,onError}:{control:Control;project:Project;disabled:boolean;run:Run;onError:(e:unknown)=>void}){

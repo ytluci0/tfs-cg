@@ -11,7 +11,7 @@ import {Choice,Num} from './controls';
 import {VariableSelect} from './variable-select';
 export function ControlSettings({item,project,patch,change,onFormations}:{item:Control;project:Project;patch:(v:Partial<Control>)=>void;change:(fn:(p:Project)=>Project)=>void;onFormations:()=>void}){
  const [newKey,setNewKey]=useState(''),[error,setError]=useState(''),[quickDraft,setQuickDraft]=useState(item.quickSteps?.join(',')||'');
- const numeric=['counter','number','slider','progress'].includes(item.kind),bound=!['button','pitch','bench','scoreboard','label','image'].includes(item.kind);
+ const numeric=['counter','number','slider','progress'].includes(item.kind),bound=!['button','pitch','bench','scoreboard','label','image','artwork','player'].includes(item.kind);
  return <><label>Control type<Choice label="Control type" value={item.kind} options={controlKinds} onChange={v=>{
   const kind=v as Control['kind'],primary=item.actions.find(a=>a.type==='increment'),variable=item.variable||(primary?.target&&typeof project.variables[primary.target]==='number'?primary.target:'');
   patch({kind,variable,...(kind==='counter'?{step:Math.abs(Number(primary?.value))||item.step||1,actions:item.actions.filter(a=>a!==primary),...(item.placement?{placement:{...item.placement,height:Math.max(150,item.placement.height)}}:{})}:{})});
