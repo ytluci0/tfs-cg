@@ -2,6 +2,9 @@ const {contextBridge,ipcRenderer}=require('electron');
 const call=(name,...args)=>ipcRenderer.invoke('broadcastcg:'+name,...args);
 contextBridge.exposeInMainWorld('broadcastCG',Object.freeze({
   auth:async(action,data)=>{const result=await call('auth',action,data);if(!result.ok){const error=new Error(result.error);error.status=result.status;throw error;}return result.value;},
+  preparePsd:()=>call('preparePsd'),
+  commitPsd:options=>call('commitPsd',options),
+  cancelPsd:()=>call('cancelPsd'),
   info:()=>call('info'),
   status:()=>call('status'),
   settings:()=>call('settings'),

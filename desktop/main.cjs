@@ -2,6 +2,7 @@ const {app,BrowserWindow,Menu,protocol,session,screen,ipcMain,dialog,safeStorage
 const {join,resolve,relative,isAbsolute,extname}=require('node:path');
 const fs=require('node:fs');
 const os=require('node:os');
+const {createPsdSessions}=require('./psd-session.cjs');
 const {restoreBounds}=require('./window-state.cjs');
 const {createLocalService,ServiceError}=require('./app/service.cjs');
 
@@ -12,7 +13,7 @@ if(qa)app.setPath('userData',join(__dirname,'.cache','smoke-profile-'+Date.now()
 const dataDirectory=join(app.getPath('userData'),'data');
 protocol.registerSchemesAsPrivileged([{scheme:'broadcastcg',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 let studio,output,service,quitting=false,logPath,outputReady=false,lastOutputAck=null,outputUnconfirmed=false,powerBlock;
-let currentToken=null;
+let currentToken=null,psdSessions;
 const rememberFile=join(dataDirectory,'remembered-login.bin');
 function clearRemember(){fs.rmSync(rememberFile,{force:true});}
 function acceptSession(result){
@@ -87,6 +88,7 @@ function settings(){return{workstation:os.hostname(),role:'Graphics operator',lo
 function ipc(name,fn){ipcMain.handle('broadcastcg:'+name,async(event,...args)=>{if(!trustedStudio(event))throw Error('Operation not allowed.');return fn(...args);});}
 function registerIpc(){
   ipc('auth',async(action,data={})=>{try{
+    if(['logout','login','setup','changePassword'].includes(action))psdSessions?.clear();
     let value;
     if(action==='bootstrap')value=service.auth.bootstrap();
     else if(action==='setup'||action==='login'){
@@ -99,7 +101,7 @@ function registerIpc(){
     else throw new ServiceError('Unknown account operation.',400);
     return {ok:true,value};
   }catch(error){return{ok:false,status:error.status||500,error:error instanceof ServiceError?error.message:'The local account operation failed.'};}});
-  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local sports and esports workflows',...status()};});
+  ipc('info',()=>{authorize();return{name:'BroadcastCG',version:app.getVersion(),dataDirectory,phase:'Local Photoshop PSD import',...status()};});
   ipc('status',()=>{authorize();return status();});ipc('settings',()=>{authorize();return settings();});
   ipc('saveSettings',value=>{
     authorize('system.configure');
@@ -125,6 +127,14 @@ function registerIpc(){
     if(inspected.external.length){const answer=await dialog.showMessageBox(studio,{type:'warning',title:'External dependencies',message:'This project contains '+inspected.external.length+' external data or image URL(s). They require a network connection.',detail:'Embedded images are included. External feed credentials must be configured locally. No fonts or video files are included in this package version.',buttons:['Cancel','Import project'],defaultId:0,cancelId:0});if(answer.response!==1)return null;}
     return service.importProject(inspected,token);
   });
+  ipc('preparePsd',async()=>{
+    const token=currentToken;authorize('templates.import');authorize('graphics.create');
+    const result=await dialog.showOpenDialog(studio,{title:'Import Photoshop PSD',properties:['openFile'],filters:[{name:'Photoshop document',extensions:['psd']}]});
+    if(result.canceled||!result.filePaths[0])return null;
+    return psdSessions.prepare(result.filePaths[0],token);
+  });
+  ipc('commitPsd',options=>psdSessions.finish(options,currentToken));
+  ipc('cancelPsd',()=>{psdSessions.clear();return true;});
   ipc('exportDiagnostics',async()=>{
     const token=currentToken;service.authorize(token,'diagnostics.view');
     const report={application:'BroadcastCG',version:app.getVersion(),time:new Date().toISOString(),runtime:{electron:process.versions.electron,node:process.versions.node,chrome:process.versions.chrome},status:status(),storage:service.diagnostics()};
@@ -147,14 +157,16 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
   app.whenReady().then(async()=>{
     fs.mkdirSync(dataDirectory,{recursive:true});logPath=join(dataDirectory,'diagnostics.log');
     service=createLocalService({directory:dataDirectory,encrypt:value=>{if(!safeStorage.isEncryptionAvailable())throw new ServiceError('Windows credential protection is unavailable.',503);return safeStorage.encryptString(value);},decrypt:bytes=>safeStorage.decryptString(bytes),beforePublish,confirmProgram,event:log,workstation:()=>service?.settings.get('preferences',{})?.workstation||os.hostname()});
+    psdSessions=createPsdSessions({workerPath:join(__dirname,'app','psd-worker.cjs'),authorize:token=>{service.authorize(token,'templates.import');service.authorize(token,'graphics.create');},commit:(draft,options,token)=>service.importPsd(draft,options,token)});
     if(fs.existsSync(rememberFile)){try{acceptSession(service.auth.resume(safeStorage.decryptString(fs.readFileSync(rememberFile))));}catch{clearRemember();log('REMEMBERED_LOGIN_EXPIRED');}}
     protocol.handle('broadcastcg',request=>handleRequest(request));
     const outputSession=session.fromPartition('broadcastcg-output');
     outputSession.protocol.handle('broadcastcg',request=>handleRequest(request,true));
     outputSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));outputSession.setPermissionCheckHandler(()=>false);
     outputSession.webRequest.onBeforeRequest({urls:['*://*/*','file://*/*']},(details,callback)=>callback({cancel:!(details.resourceType==='image'&&details.url.startsWith('https://'))}));
-    session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
-    session.defaultSession.setPermissionCheckHandler(()=>false);
+    const localFonts=(wc,permission,url)=>{if(permission!=='local-fonts'||wc!==studio?.webContents||!trusted({url}))return false;try{authorize('graphics.create');return true;}catch{return false;}};
+    session.defaultSession.setPermissionRequestHandler((wc,permission,callback,details)=>callback(localFonts(wc,permission,details.requestingUrl)));
+    session.defaultSession.setPermissionCheckHandler((wc,permission,origin)=>localFonts(wc,permission,origin));
     session.defaultSession.on('will-download',(event,item,contents)=>{
       if(contents!==studio?.webContents){event.preventDefault();return;}
       try{authorize('templates.export');}catch{event.preventDefault();return;}
@@ -170,9 +182,9 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     studio.webContents.on('will-prevent-unload',event=>{const answer=dialog.showMessageBoxSync(studio,{type:'warning',message:'There are unsaved editor changes.',detail:'Keep the application open to save or export your work.',buttons:['Keep editing','Close anyway'],defaultId:0,cancelId:0});if(answer===1)event.preventDefault();});
     studio.on('closed',()=>{studio=null;quitting=true;if(output&&!output.isDestroyed())output.close();app.quit();});
     powerBlock=powerSaveBlocker.start('prevent-app-suspension');
-    if(qa)require('./app/smoke.cjs').run({app,studio,openOutput,getOutput:()=>output,service,directory:join(__dirname,'.cache'),log}).catch(error=>{fs.writeFileSync(join(__dirname,'.cache','smoke-result.json'),JSON.stringify({ok:false,error:String(error),stack:error.stack},null,2));app.exit(1);});
+    if(qa)require('./app/smoke.cjs').run({app,studio,dialog,openOutput,getOutput:()=>output,service,directory:join(__dirname,'.cache'),log}).catch(error=>{fs.writeFileSync(join(__dirname,'.cache','smoke-result.json'),JSON.stringify({ok:false,error:String(error),stack:error.stack},null,2));app.exit(1);});
   }).catch(error=>{log('STARTUP_FAILED','failed');dialog.showErrorBox('BroadcastCG could not start',error.message);app.exit(1);});
 }
 app.on('before-quit',()=>{quitting=true;});
-app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{service?.auth.endSession(currentToken);service?.close();}catch{};});
+app.on('will-quit',()=>{if(powerBlock!==undefined)powerSaveBlocker.stop(powerBlock);try{psdSessions?.clear();service?.auth.endSession(currentToken);service?.close();}catch{};});
 app.on('window-all-closed',()=>app.quit());

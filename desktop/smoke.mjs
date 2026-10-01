@@ -4,11 +4,12 @@ import {randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
 import {panelSmoke} from './panel-smoke.mjs';
+import {psdSmoke} from './psd-smoke.mjs';
 import {sportsSmoke} from './sports-smoke.mjs';
 import {commandSmoke} from './command-smoke.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await sleep(100);}throw Error('Renderer readiness timed out.');}
-export async function run({app,studio,openOutput,getOutput,service,directory}){
+export async function run({app,studio,dialog,openOutput,getOutput,service,directory}){
  const errors=[],checks=[];studio.webContents.on('console-message',(_e,...args)=>{const d=args[0];if((typeof d==='object'&&d.level==='error')||d===3)errors.push(typeof d==='object'?d.message:args[1]);});
  const js=code=>studio.webContents.executeJavaScript(code),auth=(action,data)=>js(`window.broadcastCG.auth(${JSON.stringify(action)},${JSON.stringify(data)})`);
  const capture=async name=>{studio.show();studio.focus();await sleep(600);for(let n=0;n<3;n++){try{writeFileSync(join(directory,name),(await studio.webContents.capturePage()).toPNG());return;}catch(e){if(n===2)throw e;await sleep(400);}}};
@@ -30,6 +31,7 @@ export async function run({app,studio,openOutput,getOutput,service,directory}){
  assert.equal(await getOutput().webContents.executeJavaScript('document.querySelectorAll("svg[data-testid=graphic]").length'),1);checks.push('native TAKE and renderer acknowledgement');
  await commandSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await sportsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,getOutput});
+ await psdSmoke({studio,dialog,js,api,reload,capture,checks,sleep,until,project:p,directory,getOutput});
  await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Accounts & access').click()");await until(()=>js("document.querySelector('.account-table tbody tr')!==null"));await capture('accounts-admin.png');
  const viewer=await auth('createUser',{username:'qa_viewer',displayName:'QA Viewer',password,role:'VIEWER',enabled:true,allWorkspaces:false,workspaceIds:[p.id]});
  await auth('logout');assert.equal((await api('/api/projects')).status,401);

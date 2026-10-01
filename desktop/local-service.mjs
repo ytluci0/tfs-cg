@@ -1,3 +1,4 @@
+import {psdOptionsSchema,psdScene} from '../lib/psd-model.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {mkdirSync} from 'node:fs';
@@ -38,7 +39,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const db=new DatabaseSync(join(directory,'broadcastcg.sqlite'));
   db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version>4){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
+  if(version>5){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
   if(version===0)db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,document TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE assets(id TEXT PRIMARY KEY,name TEXT NOT NULL,mime TEXT NOT NULL,bytes BLOB NOT NULL);
@@ -50,6 +51,11 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   migrateSecurity(db,directory,version===1);
   migrateCommands(db,directory,version===2);
   migrateSports(db,directory,version===3);
+  if(db.prepare('PRAGMA user_version').get().user_version<5){
+    if(version===4){mkdirSync(join(directory,'backups'),{recursive:true});db.prepare('VACUUM INTO ?').run(join(directory,'backups','before-psd-'+Date.now()+'-'+randomUUID()+'.sqlite'));}
+    // Compatibility barrier: older releases must not strip PSD groups on save.
+    db.exec('PRAGMA user_version=5');
+  }
   const clocks=createSportsClocks({db,monotonic});
   const security=createSecurity({db,now,workstation,event}),{auth,authenticate,requirePermission,requireWorkspace,canAccess,record}=security;
   const outputContext=Object.freeze({output:true});
@@ -230,7 +236,23 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     authorize(token,permission){const actor=authenticate(token);if(permission)requirePermission(actor,permission);return actor;},
     health(){try{return Number.isInteger(db.prepare('PRAGMA schema_version').get().schema_version);}catch{return false;}},
     async handle(request,context){try{return await route(request,context);}catch(e){const status=e instanceof ServiceError?e.status:e?.issues?400:500;if(status>=500)event('SERVICE_ERROR','failed');return json({error:e instanceof ServiceError?e.message:e?.issues?'Project validation failed. Existing data was preserved.':'The local service could not complete the operation.'},status);}},
-    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:4,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
+    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:5,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
+    importPsd(draft,raw,token){
+      const options=psdOptionsSchema.parse(raw),actor=authenticate(token);requirePermission(actor,'templates.import');requirePermission(actor,'graphics.create');
+      const old=readProject(actor,options.projectId);commands.assertIdle(options.projectId);
+      if(old.revision!==options.revision)throw new ServiceError('Workspace changed during PSD review. Save and inspect the latest project before importing.',409);
+      let scene=sceneSchema.parse(psdScene(draft,options));scene.id=randomUUID();
+      const used=new Set(assetIds(scene)),assets=draft.assets.filter(a=>used.has(a.id));
+      if(assets.length!==used.size)throw new ServiceError('PSD images are incomplete. Import the file again.');
+      let total=0;for(const a of assets){const bytes=Buffer.from(a.bytes);total+=bytes.length;if(bytes.length>10000000||total>55000000||imageMime(bytes)!=='image/png')throw new ServiceError('Invalid PSD images.');}
+      db.exec('BEGIN IMMEDIATE');try{
+        let text=JSON.stringify(scene);for(const a of assets){const id=randomUUID();db.prepare('INSERT INTO assets(id,name,mime,bytes,uploaded_by) VALUES(?,?,?,?,?)').run(id,a.name,'image/png',Buffer.from(a.bytes),actor.user.id);text=text.split('/api/assets/'+a.id).join('/api/assets/'+id);}
+        scene=sceneSchema.parse(JSON.parse(text));const project=validateProject({...old.project,scenes:[...old.project.scenes,scene]});checkProjectChanges(actor,old.project,project,requirePermission);validateAssets(actor,project);
+        const revision=old.revision+1;db.prepare('UPDATE projects SET document=?,revision=?,updated_at=? WHERE id=?').run(JSON.stringify(project),revision,now(),project.id);
+        for(const id of assetIds(scene))db.prepare('INSERT OR IGNORE INTO project_assets(project_id,asset_id) VALUES(?,?)').run(project.id,id);
+        record('PSD_IMPORT',scene.id,'success',actor,{projectId:project.id,mode:options.mode,layers:scene.layers.length});db.exec('COMMIT');return{project,revision,sceneId:scene.id};
+      }catch(e){db.exec('ROLLBACK');throw e;}
+    },
     exportProject(raw,token){
       const actor=authenticate(token);requirePermission(actor,'templates.export');const project=clocks.project(validateProject(raw)),assets=[],missing=[];
       if(db.prepare('SELECT id FROM projects WHERE id=?').get(project.id))requireWorkspace(actor,project.id);else requirePermission(actor,'projects.create');validateAssets(actor,project);
