@@ -9,7 +9,7 @@ import {aePng} from './fixtures/ae.mjs';
 const script=readFileSync(new URL('../desktop/assets/BroadcastCG-AE-Export.jsx',import.meta.url),'utf8').replace(/^#target.*\r?\n/,'');
 // This is a scripting-contract harness, not an Adobe runtime. Never label it as
 // an AE-hosted render test. It exercises the exact distributed exporter script.
-function exportFixture({unsupported=false,separated=false,expression=false,text=false,footage=false,cancel=false}={}){
+function exportFixture({unsupported=false,separated=false,expression=false,text=false,footage=false,cancel=false,effect}={}){
  const capture={alerts:[],written:null};
  function CompItem(){}function SolidSource(){}function FootageItem(){}
  const png=aePng(),pngFile={name:'Logo.png',fsName:'Logo.png',exists:true,length:png.length,open:()=>true,read:()=>png.toString('latin1'),close:()=>{}};
@@ -21,8 +21,8 @@ function exportFixture({unsupported=false,separated=false,expression=false,text=
  const td={text:'A "quoted" title \\ test',pointText:true,applyFill:true,applyStroke:false,font:'ArialMT',fontStyle:'Regular',fontSize:30,fillColor:[1,1,1],justification:0};
  const textGroup={property:n=>n==='ADBE Text Document'?stat(td):null};
  const solid=Object.assign(new SolidSource(),{color:[1,.2,0]});
- const makeLayer=(id,threeD=false)=>({name:'Layer '+id,width:footage?40:200,height:footage?30:60,enabled:true,solo:false,guideLayer:false,nullLayer:false,inPoint:5,outPoint:6,threeDLayer:threeD,blendingMode:0,autoOrient:0,property:n=>n==='ADBE Transform Group'?transform:text&&n==='ADBE Text Properties'?textGroup:null,sourceRectAtTime:()=>({left:0,top:-25,width:180,height:35}),source:footage?Object.assign(new FootageItem(),{mainSource:{isStill:true},file:pngFile,pixelAspect:1,useProxy:false}):{mainSource:solid}});
- const comp=Object.assign(new CompItem(),{name:'Harness "composition"',width:640,height:360,pixelAspect:1,workAreaStart:5,workAreaDuration:1,duration:8,frameRate:10,numLayers:unsupported?2:1,layer:n=>makeLayer(n,unsupported&&n===1)});
+ const makeLayer=(id,threeD=false)=>({name:'Layer '+id,width:footage?40:200,height:footage?30:60,enabled:true,solo:false,guideLayer:false,nullLayer:false,inPoint:5,outPoint:6,threeDLayer:threeD,blendingMode:0,autoOrient:0,property:n=>n==='ADBE Transform Group'?transform:text&&n==='ADBE Text Properties'?textGroup:effect&&id===1&&n==='ADBE Effect Parade'?{numProperties:1,property:()=>({enabled:effect==='enabled'})}:null,sourceRectAtTime:()=>({left:0,top:-25,width:180,height:35}),source:footage?Object.assign(new FootageItem(),{mainSource:{isStill:true},file:pngFile,pixelAspect:1,useProxy:false}):{mainSource:solid}});
+ const comp=Object.assign(new CompItem(),{name:'Harness "composition"',width:640,height:360,pixelAspect:1,workAreaStart:5,workAreaDuration:1,duration:8,frameRate:10,numLayers:unsupported||effect==='enabled'?2:1,layer:n=>makeLayer(n,unsupported&&n===1)});
  const app={project:{activeItem:comp},version:'test-harness'};
  runInNewContext(script,{app,CompItem,SolidSource,FootageItem,File:{saveDialog:()=>cancel?null:output},BlendingMode:{NORMAL:0},AutoOrientType:{NO_AUTO_ORIENT:0},KeyframeInterpolationType:{HOLD:1},ParagraphJustification:{LEFT_JUSTIFY:0,CENTER_JUSTIFY:1,RIGHT_JUSTIFY:2},alert:s=>capture.alerts.push(s)},{timeout:3000});
  return capture;
@@ -38,3 +38,12 @@ test('exporter escapes text and embeds local PNG bytes without file links',()=>{
  const image=exportFixture({footage:true}),p=JSON.parse(image.written),d=convertAe(image.written);assert.deepEqual(Buffer.from(p.assets[0].bytes,'base64'),aePng());assert.equal(d.assets.length,1);assert.equal(d.scene.layers[0].type,'image');
 });
 test('cancelling AE export writes no file',()=>{const r=exportFixture({cancel:true});assert.equal(r.written,null);assert.deepEqual(r.alerts,[]);});
+
+test('enabled AE effects require an explicit fallback warning; disabled effects retain editable layers',()=>{
+ const enabled=JSON.parse(exportFixture({effect:'enabled'}).written);
+ assert.deepEqual(enabled.layers.map(l=>l.name),['Layer 2']);
+ assert.ok(enabled.warnings.some(w=>w.layer==='Layer 1'&&/Skipped:.*effects\/plugins.*rendered fallback/.test(w.message)));
+ const disabled=JSON.parse(exportFixture({effect:'disabled'}).written);
+ assert.deepEqual(disabled.layers.map(l=>l.name),['Layer 1']);
+ assert.ok(!disabled.warnings.some(w=>w.message.startsWith('Skipped:')));
+});

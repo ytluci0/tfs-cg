@@ -21,7 +21,7 @@ This qualification is separate from the simulated exporter contract and the Broa
 | --- | --- |
 | AE-QA-Transforms | Linear motion, off-center anchor, negative/nonuniform scale, rotation, hold opacity, expression-result samples, separated X/Y position |
 | AE-QA-Text-PNG | Editable point text and baseline, local font resolution, embedded still PNG, layer in/out times |
-| AE-QA-Diagnostics | Supported solid survives; parented and 3D layers are explicitly reported as skipped |
+| AE-QA-Diagnostics | Supported solid and disabled Fill effect survive; parented, 3D and enabled Fill effect layers are explicitly reported as skipped |
 
 The fixture samples frames 0, 6, 15, 30, 45 and 59 of a 2-second, 30-fps work area starting at composition time 0.5 seconds. Broader coverage must include actual user compositions, fractional frame rates, longer timelines, many layers and measured frame timing before production qualification. A generated passing fixture does not prove arbitrary AEP, effect, expression or plugin parity.
 

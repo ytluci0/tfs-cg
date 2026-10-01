@@ -37,6 +37,8 @@ PSD parsing and PNG encoding run in a bounded worker thread, with serialized ins
 
 ## Upgrade and verification
 
+Actual Photoshop 2020 Clouds and Solarize filter output has also passed pixel comparison, installed-runtime output, export/import and restart checks. See [Adobe plugin compatibility](ADOBE-PLUGIN-COMPATIBILITY.md) for the exact scope, evidence and repeatable host tests. This verifies baked filter artwork, not native Adobe plugin hosting.
+
 Schema 5 is a compatibility barrier for group-aware projects. Opening an existing schema-4 profile first creates a consistent `backups/before-psd-*.sqlite` snapshot, then advances the marker. Earlier upgrades retain their original pre-migration backup. Do not downgrade a migrated profile to an earlier app; older releases reject schema 5 rather than stripping groups while saving.
 
 Automated tests cover supported text and pixel conversion, default Photoshop metadata, unsupported-feature reporting, format/layer/depth limits, invalid group hierarchies, atomic rollback, stale revisions, revoked sessions, embedded-asset export/import, font reports, worker cancellation/timeout and schema-4 backup. Native Electron QA exercises the actual file-picker IPC and worker using generated PSD fixtures, zero-difference saved-pixel rendering for a simple fixture, review cancellation, local font enumeration, editing and persistence, reference switching, local output acknowledgement and compact-window layout. Additional upstream sample PSDs were inspected for nested groups, masks and complex text. This is not a claim of lossless conversion for arbitrary PSDs or validation against all Photoshop versions.

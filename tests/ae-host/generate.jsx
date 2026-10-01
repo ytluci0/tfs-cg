@@ -60,7 +60,9 @@
         inspect(typography,source,[]);
         var unsupported=composition('AE-QA-Diagnostics'),base=solid(unsupported,'Supported base',[.1,.3,.7],300,80,[320,180]),parented=solid(unsupported,'Skipped parented',[1,1,1],20,20,[50,50]);parented.parent=base;
         var threed=solid(unsupported,'Skipped 3D',[1,0,0],20,20,[60,60]);threed.threeDLayer=true;
-        inspect(unsupported,source,['Skipped parented','Skipped 3D']);
+        var effectLayer=solid(unsupported,'Skipped enabled Fill',[0,1,0],45,45,[100,100]);effectLayer.property('ADBE Effect Parade').addProperty('ADBE Fill');
+        var disabledEffect=solid(unsupported,'Disabled Fill remains editable',[.8,.5,.1],60,35,[500,250]);disabledEffect.property('ADBE Effect Parade').addProperty('ADBE Fill').enabled=false;
+        inspect(unsupported,source,['Skipped parented','Skipped 3D','Skipped enabled Fill']);
         app.project.save(new NativeFile(outputDirectory.fsName+'/AE-qualification.aep'));
         var queued=false;for(var q=1;q<=app.project.renderQueue.numItems;q++)if(app.project.renderQueue.item(q).render)queued=true;
         if(queued){app.project.renderQueue.render();for(q=0;q<report.cases.length;q++)if(report.cases[q].referenceStatus==='queued')report.cases[q].referenceStatus='render-attempted';}

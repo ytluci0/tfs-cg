@@ -1,0 +1,12 @@
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {resolve,join,dirname} from 'node:path';
+import {createHash} from 'node:crypto';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+const directory=join(root,'desktop/.cache','psd-host-'+new Date().toISOString().replace(/[:.]/g,'-'));
+mkdirSync(directory,{recursive:true});
+const source=readFileSync(join(root,'tests/psd-host/generate.jsx'),'utf8');
+const script=source.replace('__OUTPUT_DIRECTORY__',JSON.stringify(directory.replaceAll('\\','/')));
+writeFileSync(join(directory,'Run-Photoshop-qualification.jsx'),script);
+writeFileSync(join(directory,'preparation.json'),JSON.stringify({status:'prepared-not-executed',scriptSHA256:createHash('sha256').update(script).digest('hex'),createdAt:new Date().toISOString(),directory},null,2));
+console.log(JSON.stringify({prepared:true,executedInAdobe:false,script:join(directory,'Run-Photoshop-qualification.jsx'),directory},null,2));
