@@ -6,7 +6,7 @@ export function exposedVariables(project){
  if(project.sports)['homeScore','awayScore','homeSeries','awaySeries','period','matchPhase','matchClock','shotClock','timeoutClock','homeFouls','awayFouls','homeTimeouts','awayTimeouts','possession','currentMap','homeSide','awaySide','stoppage','matchWinner','homeTeam','awayTeam','homeColor','awayColor','homeFormation','awayFormation','playerName','playerNumber','playerPhoto','playerPosition','playerGoals','playerAssists','playerKills','playerDeaths','playerPoints','playerRebounds','playerFouls','eventLabel'].forEach(k=>names.add(k));
  for(const panel of project.panels){
   if(panel.type==='football'||panel.controls.some(c=>['pitch','bench','scoreboard'].includes(c.kind)))Object.keys(footballTypes).forEach(k=>names.add(k));
-  for(const c of panel.controls){if(c.variable)names.add(c.variable);Object.values(c.dataFields||{}).forEach(k=>names.add(k));for(const a of c.actions)if(['set','increment','counter','clock'].includes(a.type)&&a.target)names.add(a.target);}
+  for(const c of panel.controls){if(c.variable)names.add(c.variable);Object.values(c.dataFields||{}).forEach(k=>names.add(k));Object.values(c.selectionBindings||{}).forEach(k=>names.add(k));for(const a of [...c.actions,...Object.values(c.events||{}).flat()])if(['set','increment','counter','clock'].includes(a.type)&&a.target)names.add(a.target);}
  }
  for(const macro of project.macros||[])for(const a of macro.actions)if(['set','increment','counter','clock'].includes(a.type)&&a.target)names.add(a.target);
  for(const b of project.bindings)if(b.destination==='variable'&&b.targetVariable)names.add(b.targetVariable);
@@ -27,6 +27,7 @@ export function checkProjectChanges(actor,old,next,requirePermission){
  if(!actor.user.permissions.some(p=>['projects.create','projects.edit','graphics.create','graphics.edit','graphics.delete','panels.create','panels.edit','panels.delete','panels.operate','data.configure'].includes(p)))throw new ServiceError('This account has read-only access.',403);
  if(!old){check('projects.create');check('graphics.create');check('panels.create');if(next.sources.length||next.bindings.length)check('data.configure');return;}
  if(old.name!==next.name)check('projects.edit');
+ if(!same(old.optionLists,next.optionLists))check('data.fetch');
  if(!same(old.sources,next.sources)||!same(old.bindings,next.bindings))check('data.configure');
  if(!same(old.formations,next.formations)||!same(old.toolPresets,next.toolPresets)||!same(old.panelComponents,next.panelComponents)||!same(old.macros,next.macros))check('panels.edit');
  for(const [key,prefix] of [['scenes','graphics'],['panels','panels']]){

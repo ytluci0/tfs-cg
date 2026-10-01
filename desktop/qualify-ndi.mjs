@@ -24,6 +24,7 @@ const bridge=outputFactory({directory,appDirectory,executable,readProgram:async(
 const ndi=ndiFactory({bridge,helper,spawnWorker:(...args)=>{nativeWorker=spawn(...args);return nativeWorker;}});
 const scene=defaultProject().scenes[0];scene.layers=[layer('rect',{x:760,y:340,width:400,height:400,color:'#e02040',opacity:.5})];scene.duration=Math.max(20,seconds+10);
 for(let i=0;i<32;i++)scene.layers.push(layer('rect',{x:100+i*12,y:30+i*8,width:80,height:6,color:i%2?'#00d4c8':'#f6bd3e',keys:{x:Array.from({length:Math.ceil(scene.duration/2)+1},(_,n)=>({time:Math.min(scene.duration,n*2),value:n%2?1300-i*12:100+i*12,ease:'linear'}))}}));
+const creative=process.argv[7]==='creative';if(creative){report.creative=true;for(let i=0;i<32;i++)if(i%4===0)scene.layers[i+1].visual={fill:'linear',gradientColor:'#3355ee',glow:2,strokeWidth:1,stroke:'#ffffff'};scene.layers.push(layer('rect',{x:1500,y:30,width:300,height:180,color:'#236bab',shadow:true,radius:20,visual:{fill:'radial',gradientColor:'#142639',shadowBlur:8}}),layer('text',{x:1400,y:250,width:380,height:90,text:'LIVE SPORTS BROADCAST',fontSize:70,visual:{autoFit:true}}),layer('arrow',{x:1500,y:860,width:230,height:80,color:'#eea020'}),layer('path',{x:30,y:820,width:150,height:150,visual:{fill:'linear',gradientColor:'#22aaff',points:[{x:0,y:1},{x:.5,y:0},{x:1,y:1}]}}));report.layers=scene.layers.length;}
 function value(mode='show'){return{revision:randomUUID(),projectId:'ndi-qualification',scene,variables:{},mode,startedAt:Date.now()};}
 async function take(mode){program=value(mode);await ndi.publish(program);return program;}
 function receive(duration){probeLines=[];receiver=spawn(join(cache,'NdiProbe.exe'),[detectNdi().path,ndi.info().source,String(duration)],{windowsHide:true,stdio:['ignore','pipe','pipe']});createInterface({input:receiver.stdout}).on('line',line=>{try{probeLines.push(JSON.parse(line));}catch{}});return new Promise((resolve,reject)=>{receiver.once('error',reject);receiver.once('exit',code=>code===0?resolve(probeLines):reject(Error('NDI probe failed: '+JSON.stringify(probeLines))));});}
@@ -41,7 +42,7 @@ try{
  await ndi.start({source:'BroadcastCG QA restart',width,height,fps,port:17824,background:'transparent'});const restarted=receive(10);await restarted;assert.ok(probeLines.filter(x=>x.type==='frame').every(x=>x.center[3]===0));report.checks.push('Manual restart starts transparent and does not replay the previous program');
  nativeWorker.kill();await waitFor(()=>!ndi.info().ready);await assert.rejects(()=>ndi.publish(value()),/sender stopped|not ready|pipe disconnected/);report.checks.push('Native sender failure marks output unavailable and rejects TAKE without retry');
  report.ok=true;
-}catch(e){report.error=e.stack;console.error(e);}finally{receiver?.kill();await ndi.stop();bridge.dispose();writeFileSync(join(cache,'phase11-ndi-'+width+(fps===50?'':'-'+fps)+'.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));app.exit(report.ok?0:1);}
+}catch(e){report.error=e.stack;console.error(e);}finally{receiver?.kill();await ndi.stop();bridge.dispose();writeFileSync(join(cache,'phase11-ndi-'+width+(fps===50?'':'-'+fps)+(creative?'-creative':'')+'.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));app.exit(report.ok?0:1);}
 
 }
 main().catch(e=>{console.error(e);app.exit(1);});

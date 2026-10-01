@@ -2,6 +2,7 @@ import {createRoot} from 'react-dom/client';
 import {useEffect,useRef,useState} from 'react';
 import {Graphic} from '../app/studio/canvas';
 import {Program,safeImage,textValue} from '../lib/studio-model';
+import {cueTime} from '../lib/creative-tools';
 import {frameMeter} from './frame-meter.mjs';
 import './browser-output.css';
 
@@ -44,9 +45,9 @@ function Receiver(){
  },[]);
  useEffect(()=>{meter.current=frameMeter(format.fps,performance.now());let frame:number;const tick=(time:number)=>{if(meter.current.tick(time))setNow(time);frame=requestAnimationFrame(tick);};frame=requestAnimationFrame(tick);return()=>cancelAnimationFrame(frame);},[format.fps]);
  useEffect(()=>{if(!view?.program||!view.ack)return;let second=0;const first=requestAnimationFrame(()=>{second=requestAnimationFrame(()=>send({type:'rendered',revision:view.program!.revision}));});return()=>{cancelAnimationFrame(first);cancelAnimationFrame(second);};},[view?.program?.revision,view?.epoch]);
- const p=view?.program,elapsed=view?Math.max(0,(now-view.origin)/1000):0;
+ const p=view?.program,elapsed=view?Math.max(0,(now-view.origin)/1000):0,frameTime=p?.scene?cueTime(p.scene,elapsed,p.cue):0;
  return <main style={{width:'100vw',height:'100vh',background:format.background}} data-revision={p?.revision||''} data-epoch={view?.epoch||''}>
-  {p?.scene&&!(p.mode==='hide'&&elapsed>=.5)&&<div className="broadcast-picture" style={{opacity:p.mode==='hide'?Math.max(0,1-elapsed/.5):1}}><Graphic scene={p.scene} variables={p.variables} time={p.mode==='hide'?p.scene.duration:Math.min(elapsed,p.scene.duration)} images={view?.images} id="broadcast"/></div>}
+  {p?.scene&&frameTime!==null&&!(p.mode==='hide'&&elapsed>=.5)&&<div className="broadcast-picture" style={{opacity:p.mode==='hide'?Math.max(0,1-elapsed/.5):1}}><Graphic scene={p.scene} variables={p.variables} time={p.mode==='hide'?p.scene.duration:frameTime} images={view?.images} id="broadcast"/></div>}
  </main>;
 }
 createRoot(document.getElementById('root')!).render(<Receiver/>);

@@ -3,6 +3,7 @@ import {writeFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
+import {creativeSmoke} from './creative-smoke.mjs';
 import {panelSmoke} from './panel-smoke.mjs';
 import {aeSmoke} from './ae-smoke.mjs';
 import {psdSmoke} from './psd-smoke.mjs';
@@ -30,6 +31,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  assert.ok(layout.height>200&&layout.contained,JSON.stringify(layout));
  const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
  await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
+ await creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  const command={projectId:p.id,scene:p.scenes[0],variables:p.variables,mode:'show'};
  assert.equal((await api('/api/program',command)).status,503);openOutput();await until(()=>getOutput()&&!getOutput().webContents.isLoading());
  const take=await api('/api/program',command);assert.equal(take.status,200,JSON.stringify(take));

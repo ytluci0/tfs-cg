@@ -1,7 +1,7 @@
 {
   "name": "broadcastcg-desktop",
   "productName": "BroadcastCG",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Local Windows graphics design and control workstation",
   "author": "BroadcastCG",
   "private": true,

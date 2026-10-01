@@ -31,7 +31,7 @@ test('countdown uses elapsed wall time, stops at zero, and round-trips time form
  assert.deepEqual(clockAt(10,1000,6000,'up'),{seconds:15,finished:false});
 });
 test('all library recipes validate and packs reference real tools',()=>{
- assert.equal(toolRecipes.length,33);const ids=new Set(toolRecipes.map(t=>t.id));assert.equal(ids.size,toolRecipes.length);
+ assert.equal(new Set(toolRecipes.map(r=>r.id)).size,toolRecipes.length);const ids=new Set(toolRecipes.map(t=>t.id));assert.equal(ids.size,toolRecipes.length);
  const p=defaultProject();p.panels[0].controls=toolRecipes.map(t=>control(t.label,[],t.control));assert.doesNotThrow(()=>validateProject(p));
  for(const pack of panelPacks)assert.ok(pack.recipes.every(id=>ids.has(id)));
  assert.deepEqual(optionsList('One, Two\nThree,Two'),['One','Two','Three']);

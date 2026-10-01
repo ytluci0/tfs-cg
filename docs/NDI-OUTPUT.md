@@ -102,6 +102,19 @@ Hide, receiver reconnect, empty restart and sender-failure handling all passed.
 The report is retained in `desktop/release/ndi-qualification-1080p60.json`.
 This verifies the existing 60 fps setting; no application reinstall is required.
 
+The installed **0.12.0** app was qualified again on 1 October 2026 at
+**1920 × 1080, 60 fps**, using a 37-layer scene with gradients, glow, a shadow,
+fitted text, an arrow and a custom vector shape. The receiver decoded 3,358
+frames over a 60-second test after 4.006 seconds of discovery, measured
+**59.953 fps** during reception and reported **zero receiver queue drops**.
+The renderer recorded four late intervals (maximum 83.3 ms); the sender replaced
+95 queued paints and repeated 384 frames over the full approximately 70-second
+sequence, which includes startup, Hide and receiver reconnection. These are
+observed results for this scene, not a claim of zero repeated frames or a guarantee
+for heavier compositions. Transparency, Hide, reconnect, empty restart and native
+failure handling passed. The installed-build report is
+`desktop/release/ndi-qualification-1080p60-creative.json`.
+
 Implementation references: [NDI sender API](https://docs.ndi.video/all/developing-with-ndi/sdk/ndi-send),
 [frame formats and straight alpha](https://docs.ndi.video/all/developing-with-ndi/sdk/frame-types),
 [Electron offscreen rendering](https://www.electronjs.org/docs/latest/tutorial/offscreen-rendering).

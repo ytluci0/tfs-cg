@@ -22,11 +22,12 @@ export function createCommandEngine({db,authenticate,requirePermission,requireWo
  function assertOutputFree(commandId){const active=[...running.values()].find(r=>r.job.usesOutput&&r.job.id!==commandId);if(active)throw new ServiceError('Output is reserved by '+active.job.username+' for '+active.job.label+'.',409);}
  function actorFor(run){if(run.abort.signal.aborted)throw new ServiceError('Sequence cancelled. Completed actions remain applied.',409);const actor=authenticate(run.token);requireWorkspace(actor,run.job.projectId);requirePermission(actor,'panels.operate');assertControl(actor,run.job.projectId);return actor;}
  async function wait(ms,run){const end=performance.now()+ms;run.job.waitUntil=now()+ms;run.job.status='waiting';save(run.job);while(performance.now()<end){actorFor(run);await new Promise(resolve=>{const finish=()=>{clearTimeout(timer);run.abort.signal.removeEventListener('abort',finish);resolve();};const timer=setTimeout(finish,Math.max(1,Math.min(200,end-performance.now())));run.abort.signal.addEventListener('abort',finish,{once:true});});}actorFor(run);delete run.job.waitUntil;run.job.status='running';}
- async function work(run){const job=run.job;try{
+ async function work(run){const job=run.job,branches=new Map();try{
   for(let i=0;i<run.plan.length;i++){if(closed)return;const actor=actorFor(run),entry=run.plan[i],step=job.steps[i];job.currentStep=i;const project=readProject(actor,job.projectId).project;
-   if(!conditionMatches(entry.action,project.variables)){for(let j=i;j<entry.end;j++)job.steps[j]={...job.steps[j],status:'skipped',finishedAt:now()};i=entry.end-1;save(job);continue;}
+   if(entry.guards?.some(g=>branches.get(g.index)!==g.value)||entry.action.type!=='branch'&&!conditionMatches(entry.action,project.variables)){for(let j=i;j<entry.end;j++)job.steps[j]={...job.steps[j],status:'skipped',finishedAt:now()};i=entry.end-1;save(job);continue;}
    step.status='running';step.startedAt=now();save(job);
-   if(entry.action.type==='delay'){const ms=Number(textValue(entry.action.value,project.variables));if(!Number.isFinite(ms)||ms<0||ms>10000)throw new ServiceError('Wait must be between 0 and 10000 milliseconds.');await wait(ms,run);}
+   if(entry.action.type==='branch')branches.set(i,conditionMatches(entry.action,project.variables));
+   else if(entry.action.type==='delay'){const ms=Number(textValue(entry.action.value,project.variables));if(!Number.isFinite(ms)||ms<0||ms>10000)throw new ServiceError('Wait must be between 0 and 10000 milliseconds.');await wait(ms,run);}
    else if(entry.action.type!=='macro')await execute(entry.action,{actor,token:run.token,projectId:job.projectId,commandId:job.id,signal:run.abort.signal,stage:run.stage,setStage:value=>{run.stage=value;job.staged=value;},output:run.output});
    if(closed)return;step.status='succeeded';step.finishedAt=now();job.completedSteps=job.steps.filter(s=>s.status==='succeeded').length;save(job);
   }

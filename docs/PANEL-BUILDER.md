@@ -1,5 +1,7 @@
 # Panel builder — phase 3
 
+For the added button state designer, press/release/hold actions, conditional controls, API/roster selectors and linked component appearance updates in **0.12.0**, see [Advanced design and control builder](CREATIVE-TOOLS.md). The snapshot workflow below still applies to **Add**; choose **Add linked** for shared styles.
+
 BroadcastCG 0.3.0 runs locally. Open **Panels → Build** with an Administrator or Designer account to edit a panel. Operator accounts can use its connected controls in Operate; Viewer accounts remain read-only. Account overrides still apply.
 
 ## Build a production panel
