@@ -1,0 +1,73 @@
+/* Compact workstation chrome; scope overrides so dialogs and operator controls
+   retain their own sizing regardless of the global stylesheet load order. */
+.studio > .topbar {
+  min-height: 42px;
+  padding: 5px 12px;
+  gap: 20px;
+}
+.studio .topbar .brand { font-size: 16px; gap: 8px; letter-spacing: 1.5px; }
+.studio .topbar .brand small { font-size: 10px; }
+.studio .topbar .brand-mark { width: 19px; height: 20px; border-width: 3px; }
+.studio .topbar [data-slot="tabs-trigger"] {
+  min-height: 30px;
+  height: 30px;
+  padding: 4px 10px !important;
+  font-size: 12px;
+  line-height: 20px;
+}
+.studio .topbar .output-link { font-size: 11px; }
+.studio > .projectbar { padding: 3px 12px; gap: 6px; min-height: 35px; }
+.studio .projectbar .project-name[data-slot="input"] {
+  height: 28px;
+  max-width: 260px;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.studio .projectbar > [data-slot="button"] {
+  height: 28px;
+  padding: 3px 8px;
+  gap: 5px;
+  font-size: 12px;
+}
+.studio .projectbar > [data-size="icon"] { width: 28px; padding: 5px; }
+.studio > .command-monitor {
+  min-height: 28px;
+  padding: 1px 12px;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.studio > .command-monitor > div { min-width: 0; overflow-wrap: anywhere; }
+.studio > .command-monitor > [data-slot="button"] { height: 24px; padding: 2px 6px; }
+.studio .editor-layout.design-workspace { padding-top: 28px; }
+.studio .design-layout-bar { height: 28px; padding: 0 10px; }
+.studio .design-layout-bar button { padding: 2px 6px; }
+.studio .design-center .canvas-toolbar { min-height: 31px; padding: 2px 8px; gap: 2px; }
+.studio .design-center .canvas-toolbar button { height: 26px; padding: 3px 6px; }
+.studio .design-center .designer-selection-tools { min-height: 32px; padding: 2px 8px; gap: 5px; }
+.studio .design-center .designer-selection-tools button { height: 26px; padding: 3px 6px; font-size: 11px; }
+.studio .design-center .designer-selection-tools select { height: 26px; padding: 2px 4px; font-size: 11px; }
+.studio .design-tool-options { min-height: 30px; padding: 2px 8px; gap: 5px; }
+.studio .design-tool-options button { min-height: 24px; padding: 2px 5px; }
+.studio .design-canvas-hint { padding: 2px 8px; line-height: 14px; }
+.studio .design-center .canvas-footer { min-height: 33px; padding: 2px 8px; gap: 8px; font-size: 11px; }
+.studio .design-center .canvas-footer [data-slot="button"] { height: 28px; padding: 3px 8px; font-size: 11px; }
+.studio .design-center .canvas-footer label { font-size: 11px; }
+.studio > .transport { min-height: 43px; padding: 5px 12px; gap: 8px; }
+.studio > .transport > div { gap: 8px; font-size: 12px; }
+.studio > .transport > [data-slot="button"] { height: 32px; padding: 5px 10px; font-size: 12px; }
+.studio > .statusbar { min-height: 23px; padding: 3px 12px; font-size: 11px; line-height: 16px; }
+/* Keep a usable canvas above the scrollable tracks on shorter workstations. */
+.desktop-workspace .studio > .timeline.advanced-timeline {
+  max-height: min(60dvh, max(220px, calc(100dvh - 500px)));
+}
+
+@media (max-width: 800px) {
+  .studio > .topbar { gap: 6px 12px; }
+  .studio > .projectbar { gap: 4px; }
+  .studio .projectbar .project-name[data-slot="input"] { flex: 1 1 150px; max-width: none; }
+  .studio .projectbar > .spacer { display: none; }
+}
+@media (max-width: 600px) {
+  .studio .topbar [data-slot="tabs-trigger"] { padding: 4px 6px !important; }
+  .studio > .transport > div { flex-basis: 100%; }
+}
