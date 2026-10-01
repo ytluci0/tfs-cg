@@ -1,4 +1,4 @@
-# Animation timeline — BroadcastCG 0.14.0
+# Animation timeline — BroadcastCG 0.16.2
 
 Open **Animate**, then click the arrow beside a layer in the bottom timeline. Each layer expands into Position X/Y, Scale X/Y, Rotation, Opacity, Anchor X/Y, Width and Height. Imported PSD layers use the same controls.
 
@@ -8,6 +8,8 @@ Open **Animate**, then click the arrow beside a layer in the bottom timeline. Ea
 4. Click the diamond between the previous/next arrows to add or remove a key at the playhead. Double-click an empty property track to add one there.
 
 Scale and opacity rows display percentages. The selected-key detail field shows the stored number (for example, opacity 0.5 means 50%). The previous/next arrows jump to keys for that property. Turning off a stopwatch asks before removing its keys and keeps the evaluated playhead value. Use project Undo/Redo to reverse edits.
+
+Drag a property row's number left or right to decrease or increase it. The canvas previews the change while you drag; releasing the mouse commits one Undo step. Hold **Shift** for 10× speed or **Alt** for 0.1× precision. **Escape** cancels the drag and restores the previous value. Click without dragging to type a number, then press Enter or leave the field to commit it. Locked layers cannot be adjusted. Scrubbing an animated property updates or adds a key at the current playhead; unanimated properties keep their fixed-value behavior.
 
 ## Selecting and editing keys
 

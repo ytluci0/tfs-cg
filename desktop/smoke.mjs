@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {defaultProject} from '../lib/studio-model.ts';
 import {productionSmoke} from './production-smoke.mjs';
 import {timelineSmoke} from './timeline-smoke.mjs';
+import {timelineScrubSmoke} from './timeline-scrub-smoke.mjs';
 import {buttonArtSmoke} from './button-art-smoke.mjs';
 import {designSmoke} from './design-smoke.mjs';
 import {creativeSmoke} from './creative-smoke.mjs';
@@ -37,6 +38,7 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await timelineSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
+ await timelineScrubSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await designSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
  await buttonArtSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await productionSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
