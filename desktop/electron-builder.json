@@ -1,0 +1,20 @@
+{
+  "appId": "local.broadcastcg.studio",
+  "productName": "BroadcastCG",
+  "directories": { "output": "release", "buildResources": "assets" },
+  "files": ["main.cjs", "preload.cjs", "window-state.cjs", "app/**/*", "!app/smoke.cjs", "assets/icon.ico", "package.json"],
+  "asar": true,
+  "npmRebuild": false,
+  "win": { "target": [{ "target": "nsis", "arch": ["x64"] }], "icon": "assets/icon.ico", "artifactName": "BroadcastCG-Setup-x64.${ext}" },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true,
+    "createStartMenuShortcut": true,
+    "createDesktopShortcut": false,
+    "deleteAppDataOnUninstall": false,
+    "runAfterFinish": false
+  },
+  "portable": { "artifactName": "BroadcastCG-Portable-x64.${ext}" },
+  "publish": null
+}

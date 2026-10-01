@@ -1,34 +1,67 @@
-# Frame Studio
+# BroadcastCG — local Windows desktop
 
-A private browser studio for designing animated broadcast graphics and building operator control panels.
+BroadcastCG has a local Electron desktop build using the existing graphics editor, animation tools, panel builder and sports/esports controls. It runs without ChatGPT, Cloudflare, a browser, a localhost web server or an internet connection. External feeds/images require a connection only when configured by the operator.
 
-## Use the studio
+This is **phase 1: desktop foundation**, not a production-qualified broadcast system. Local username/password login, RBAC, multi-operator networking, PSD/AE import, SDI/NDI and hardware integration are not implemented yet. See [architecture and phased plan](docs/DESKTOP-ARCHITECTURE.md).
 
-- **Design:** create scenes; add text, rectangles, ellipses, and uploaded images; select and drag unlocked layers; edit typography, size, position, rotation, color, opacity, corners, and shadows. Layer ordering, visibility, duplication, undo, and redo are available. Export the visible frame as a transparent PNG.
-- **Animate:** select a layer and property, choose an easing style, set its value, and add a keyframe at the playhead. Edit individual key values, scrub, or play the timeline. Entrance animation holds its last frame.
-- **Data:** add a public HTTPS JSON GET endpoint, save optional authentication headers, and map JSON paths to layer text, image URLs, or colors. Refresh is manual or periodic while the editor is open. Missing fields retain existing content. API refresh changes the editable project; use Update live to publish those changes.
-- **Panels:** switch between Build and Operate. Add buttons, toggles, text/number fields, dropdowns, or timers. Assign ordered actions: set/increase a variable, fetch data, stage a scene, TAKE, update live, hide, or wait. Actions can be conditional on a variable or an equality expression. Button keyboard shortcuts operate only in Operate mode. Timer values run while their panel is open; use an update action to publish variable changes.
-- **Football:** choose a player, stage a profile/card, increase scores, or select/drag a bench player onto a field player. A substitution changes the roster only after TAKE. Formation presets are 4-3-3 and 4-4-2. Player names, numbers, and photo URLs are editable.
-- **On air:** Preview is a snapshot separate from Program. TAKE starts the staged graphic's animation. Update live keeps the animation position. Hide fades out over half a second. Open output displays only the transparent graphic in a separate browser window.
+## Windows release
 
-Text layers and image URLs support double-brace shared variables, for example {{playerName}} and {{playerPhoto}}. Buttons can update those variables before staging a graphic.
+The build produces `desktop/release/BroadcastCG-Setup-x64.exe`. Run the installer, then open **BroadcastCG** from the Windows Start menu. Node.js, a database and development tools are not required on the receiving PC. The initial build is unsigned.
 
-Projects autosave after edits settle, and Save writes immediately. Projects and output state live in D1; uploaded PNG/JPEG/WebP images live in R2. JSON import/export preserves project structure but references uploaded assets in this site; it does not bundle media or saved API credentials. Export PNG requires remote images to allow cross-origin access; uploading the image avoids that restriction.
+The assisted installer supports installation-directory selection, Start menu integration and uninstall. Project data remains outside the installation in `%APPDATA%\BroadcastCG\data` and is preserved on uninstall. A normal reinstall must not remove that directory. Automatic updates are disabled.
 
-## Scope of this release
+- **Design / Animate:** use the existing layer editor and keyframes; drop PNG/JPEG/WebP files from Explorer onto the design canvas.
+- **Panels:** open Tool library for sports/esports presets, or use individual controls and Formation studio.
+- **Open output:** opens a native graphics window. Use the Output menu to select a monitor and F11 for fullscreen. TAKE requires this output to be available and acknowledge the scene update.
+- **Export / Import:** native Windows dialogs read/write `.broadcastproject`, including local images. Previous `.frame.json` projects can be imported if their referenced images are available. Missing local media blocks import; external dependencies are reported.
+- **System & settings:** workstation identity, UI scale, Windows startup, display selection, measured local status and diagnostic export.
+- **Recovery:** an unsaved draft is offered on restart where available. Conflicting drafts become separate projects. Program always starts off air; commands are never replayed.
 
-This is a working first release, not Photoshop, After Effects, or Ross XPression feature parity. It has a 2D vector/text/image renderer and keyframes, not pixel painting, PSD/AEP import, 3D, audio/video compositing, expression scripting, or SDI/NDI output. Output is browser rendered and polls the private Program channel roughly every 400 ms; it is not frame-locked broadcast hardware output. Keep output signed in to the same account. There is one Program channel per account, shared across projects. Use one live operator to avoid competing output commands.
-
-The user must supply their actual data endpoint and credentials. Requests allow public HTTPS on port 443, disable redirects, time out after 10 seconds, and limit JSON to 2 MB. Images are limited to 10 MB. The project schema bounds scenes, layers, controls, and keyframes to keep documents manageable. A conflicting save from another window is rejected rather than overwriting it.
+All working projects and assets are local. The app does not automatically download projects from the former hosted site. API headers are encrypted with Windows DPAPI and excluded from exports. Do not copy a live SQLite file to make a backup; use project export in this foundation release.
 
 ## Development
 
-Node.js 22.13 or later is required. Install with npm ci, then use npm run dev. Portable previews use loopback and a development-only sign-in at /signin-with-chatgpt?return_to=/. The hosted site uses ChatGPT sign-in; local mock authentication is excluded from production.
+Developer prerequisites: Node.js 24 and a Windows x64 build environment. Install the repository's root dependencies using its existing package lock, then install desktop tooling separately:
 
-Schema is declared in db/schema.ts. Generate migration changes with npm run db:generate. Production publication applies committed Drizzle migrations before the Worker starts. Local preview requires applying the migrations to the local DB using Wrangler with --local and --persist-to .wrangler/state. Runtime request handlers never create schema.
+```powershell
+npm ci
+cd desktop
+pnpm install --frozen-lockfile
+node node_modules/electron/install.js
+cd ..
+node desktop/build.mjs
+node desktop/run.mjs
+```
 
-Run the TypeScript check with node node_modules/typescript/bin/tsc --noEmit. The browser integration check is tests/browser-smoke.cjs; point PLAYWRIGHT_PATH at an installed Playwright package and optionally configure TEST_BASE_URL and TEST_BROWSER. It exercises editing, persistence, conflict detection, PNG export, animation, custom controls, output, substitutions, a public API binding, uploads, authentication, and responsive layouts against local development data. It creates QA projects locally only.
+Electron 44 requires its explicit binary-install command shown above. The desktop lockfile pins Electron and electron-builder independently of the legacy web stack. The electron-winstaller install script is disabled because this application uses NSIS, not Squirrel.
 
-Feature-detected WebMCP tools expose reading the open project and staging a scene without changing Program. Native WebMCP validation is unavailable in the local Edge test environment; the normal interface remains usable without that browser feature.
+```powershell
+# Validate application code and service behavior
+node node_modules/typescript/bin/tsc --noEmit
+node --experimental-strip-types --test tests/*.test.mjs
 
-Publishing uses the Sites workflow and the project ID already recorded in .openai/hosting.json. Preserve owner-only access unless the owner requests a change. Do not commit local authentication, dependency caches, .wrangler state, or output screenshots.
+# Real Electron runtime test; uses desktop/.cache/smoke-profile
+node desktop/run.mjs --smoke-test
+
+# Build the installer (also rebuilds the local application)
+node desktop/package.mjs
+
+# Optional self-extracting portable executable
+node desktop/package.mjs --portable
+```
+
+The portable target also stores user data in AppData, separate from its temporary extracted binaries. A removable-drive data mode is not implemented.
+
+The application build uses Vite to bundle React, esbuild for the local service, bundled Node SQLite, and electron-builder/NSIS for distribution. Only the desktop bundle and narrow native host are packaged. Never package dependency caches, test profiles or credentials.
+
+## Source map
+
+- `app/studio/` — shared existing editor, animation, panel and data tools.
+- `lib/studio-model.ts` — validated project/scene/control models and type-safe actions.
+- `desktop/main.cjs`, `preload.cjs` — native host, internal protocol, dialogs, output acknowledgements and OS integration.
+- `desktop/local-service.mjs` — local SQLite persistence, recovery, image package transfer and data fetching.
+- `desktop/renderer.tsx` — desktop entry and system/settings UI.
+- `desktop/electron-builder.json` — offline Windows installer configuration.
+- `tests/desktop-service.test.mjs`, `desktop/smoke.mjs` — persistence/safety and actual-runtime verification.
+
+Historical cloud routes and hosting configuration remain in source for migration reference and are not imported into the desktop build. Root dev, build and start now target desktop. Former web commands are explicitly named legacy:web:*. [Original web documentation](docs/LEGACY-WEB.md) describes only the previous application.

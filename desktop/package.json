@@ -1,0 +1,20 @@
+{
+  "name": "broadcastcg-desktop",
+  "productName": "BroadcastCG",
+  "version": "0.1.0",
+  "description": "Local Windows graphics design and control workstation",
+  "author": "BroadcastCG",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node run.mjs",
+    "package": "node package.mjs",
+    "portable": "node package.mjs --portable",
+    "install:runtime": "node node_modules/electron/install.js"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  }
+}

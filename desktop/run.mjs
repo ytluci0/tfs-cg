@@ -1,0 +1,11 @@
+import {spawn} from 'node:child_process';
+import {createRequire} from 'node:module';
+import {dirname,join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {existsSync} from 'node:fs';
+const directory=dirname(fileURLToPath(import.meta.url));
+if(!existsSync(join(directory,'app','service.cjs')))await import('./build.mjs');
+const require=createRequire(import.meta.url);
+const child=spawn(require('electron'),[directory,...process.argv.slice(2)],{stdio:'inherit'});
+child.on('exit',code=>process.exit(code??1));
+child.on('error',error=>{console.error(error.message);process.exitCode=1;});
