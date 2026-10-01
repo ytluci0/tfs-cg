@@ -1,0 +1,10 @@
+import {readFileSync,writeFileSync,mkdirSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
+import {resolve,join,dirname} from 'node:path';
+import {createHash} from 'node:crypto';
+import {aePng} from '../tests/fixtures/ae.mjs';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),out=join(root,'desktop/.cache','ae-host-'+new Date().toISOString().replace(/[:.]/g,'-'));mkdirSync(out,{recursive:true});
+const exporter=join(root,'desktop/assets/BroadcastCG-AE-Export.jsx'),template=readFileSync(join(root,'tests/ae-host/generate.jsx'),'utf8');
+const script=template.replace('__OUTPUT_DIRECTORY__',JSON.stringify(out.replaceAll('\\','/'))).replace('__EXPORTER_FILE__',JSON.stringify(exporter.replaceAll('\\','/')));
+writeFileSync(join(out,'Run-AE-qualification.jsx'),script);writeFileSync(join(out,'logo.png'),aePng(80,50));writeFileSync(join(out,'preparation.json'),JSON.stringify({status:'prepared-not-executed',exporterSHA256:createHash('sha256').update(readFileSync(exporter)).digest('hex'),createdAt:new Date().toISOString(),outputDirectory:out},null,2));
+console.log(JSON.stringify({prepared:true,executedInAdobe:false,script:join(out,'Run-AE-qualification.jsx'),directory:out},null,2));
