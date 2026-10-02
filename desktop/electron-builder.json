@@ -22,6 +22,7 @@
     "package.json",
     "assets/Install-ManagedClient.ps1",
     "editor-state.cjs",
+    "workstation-data.cjs",
     "output-controller.cjs",
     "ndi-controller.cjs",
     "ndi-config.cjs",

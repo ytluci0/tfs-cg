@@ -6,6 +6,7 @@ const {createPsdSessions}=require('./psd-session.cjs');
 const {createAeSessions}=require('./ae-session.cjs');
 const {restoreBounds}=require('./window-state.cjs');
 const {createEditorState}=require('./editor-state.cjs');
+const {resolveWorkstationData}=require('./workstation-data.cjs');
 const {createOutputController}=require('./output-controller.cjs');
 const {createNdiController}=require('./ndi-controller.cjs');
 const {detectNdi,ndiConfig}=require('./ndi-config.cjs');
@@ -20,7 +21,10 @@ app.setName('BroadcastCG');
 app.setAppUserModelId('local.broadcastcg.studio');
 const qa=!app.isPackaged&&process.argv.includes('--smoke-test');
 if(qa)app.setPath('userData',join(__dirname,'.cache','smoke-profile-'+Date.now()));
-const dataDirectory=join(app.getPath('userData'),'data');
+// Explicit custom/QA profiles remain isolated. Normal launches share stable
+// storage outside MSIX's per-launcher AppData virtualization.
+const standardProfile=resolve(app.getPath('userData')).toLowerCase()===resolve(join(app.getPath('appData'),'BroadcastCG')).toLowerCase();
+let dataDirectory=join(app.getPath('userData'),'data');
 protocol.registerSchemesAsPrivileged([{scheme:'broadcastcg',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true}}]);
 let studio,output,service,quitting=false,logPath,outputReady=false,lastOutputAck=null,outputUnconfirmed=false,powerBlock;
 let currentToken=null,psdSessions,aeSessions,localService,remote=null,managed=null,maintenance=false;
@@ -285,6 +289,7 @@ function menu(){Menu.setApplicationMenu(Menu.buildFromTemplate([
 if(!app.requestSingleInstanceLock()){app.quit();}else{
   app.on('second-instance',()=>{if(studio){if(studio.isMinimized())studio.restore();studio.show();studio.focus();}});
   app.whenReady().then(async()=>{
+    if(!qa&&standardProfile){dataDirectory=resolveWorkstationData({home:app.getPath('home'),legacyDirectory:dataDirectory,packagesDirectory:join(process.env.LOCALAPPDATA||join(app.getPath('home'),'AppData','Local'),'Packages'),recoverDirectory:recoverInterruptedRestore});rememberFile=join(dataDirectory,'remembered-login.bin');}
     fs.mkdirSync(dataDirectory,{recursive:true});logPath=join(dataDirectory,'diagnostics.log');
     const commonData=execFileSync(join(__dirname,'assets/BroadcastCGHost.exe'),['common-data'],{windowsHide:true,encoding:'utf8'}).trim();if(!isAbsolute(commonData))throw Error('Windows common data folder is unavailable.');managed=readManagedPolicy(join(commonData,'BroadcastCG','managed-client.json'));
 
