@@ -1,5 +1,7 @@
 # BroadcastCG 0.9 — access periods and recovery
 
+The current desktop release opens the [Project Library](PROJECT-LIBRARY.md) after sign-in. Use project cards to enter an editor and **← Projects** to save and return to the library.
+
 ## Give someone access for a fixed duration
 
 1. Open your self-hosted production server in **Connections**. Accounts belong to the currently selected authority; a local-workstation account is separate from a server account.

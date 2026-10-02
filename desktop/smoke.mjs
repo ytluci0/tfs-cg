@@ -18,23 +18,25 @@ import {networkSmoke} from './network-smoke.mjs';
 import {recoverySmoke} from './recovery-smoke.mjs';
 import {outputSmoke} from './output-smoke.mjs';
 import {ndiSmoke} from './ndi-smoke.mjs';
+import {librarySmoke} from './library-smoke.mjs';
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await sleep(100);}throw Error('Renderer readiness timed out.');}
 export async function run({app,studio,dialog,openOutput,getOutput,service,directory}){
  const errors=[],checks=[];studio.webContents.on('console-message',(_e,...args)=>{const d=args[0];if((typeof d==='object'&&d.level==='error')||d===3)errors.push(typeof d==='object'?d.message:args[1]);});
  const js=code=>studio.webContents.executeJavaScript(code).catch(e=>{throw Error(e.message+'\nQA script: '+code.slice(0,1500)+'\nRenderer errors: '+errors.slice(-4).join('\n'));}),auth=(action,data)=>js(`window.broadcastCG.auth(${JSON.stringify(action)},${JSON.stringify(data)})`);
  const capture=async name=>{studio.show();studio.focus();await sleep(600);for(let n=0;n<3;n++){try{writeFileSync(join(directory,name),(await studio.webContents.capturePage()).toPNG());return;}catch(e){if(n===2)throw e;await sleep(400);}}};
- async function reload(){studio.reload();await until(()=>js("document.querySelector('.studio')!==null").catch(()=>false));await sleep(150);}
+ async function reload(projectId){studio.reload();await until(()=>js("document.querySelector('.project-library')!==null").catch(()=>false));const list=(await api('/api/projects')).value;if(!list.length)return;await until(()=>js("!!document.querySelector('.library-open')").catch(()=>false));await js(projectId?`document.querySelector('[data-project-id="${projectId}"] .library-open').click()`:"(document.querySelector('.library-continue')||document.querySelector('.library-open')).click()");await until(()=>js("document.querySelector('.studio')!==null").catch(()=>false));await sleep(300);}
  async function api(path,body){return js(`fetch(${JSON.stringify(path)},${JSON.stringify(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})}).then(async r=>({status:r.status,value:await r.json()}))`);}
  await until(()=>js("document.body.innerText.includes('Set up your workstation')").catch(()=>false));
  await capture('accounts-setup.png');assert.equal((await api('/api/projects')).status,401);
  assert.equal(await js('typeof window.require'), 'undefined');assert.equal(await js('typeof window.process'), 'undefined');
  const password=randomBytes(24).toString('hex'),credentials={username:'qa_admin',displayName:'QA Administrator',password,remember:true};
  const admin=await auth('setup',credentials);assert.equal(admin.user.role,'ADMIN');assert.equal(admin.token,undefined);assert.equal(admin.rememberToken,undefined);checks.push('first-run gate and private main-process tokens');
+ const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
  await reload();
  const layout=await js(`(()=>{const c=document.querySelector('.canvas-area .canvas-stage').getBoundingClientRect(),a=document.querySelector('.canvas-area').getBoundingClientRect();return {height:c.height,contained:c.top>=a.top&&c.bottom<=a.bottom+1&&c.left>=a.left&&c.right<=a.right+1};})()`);
  assert.ok(layout.height>200&&layout.contained,JSON.stringify(layout));
- const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
+ await librarySmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
  await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await timelineSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});

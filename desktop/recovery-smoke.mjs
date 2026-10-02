@@ -29,7 +29,7 @@ export async function recoverySmoke({js,api,auth,dialog,reload,capture,checks,sl
   await js("[...document.querySelectorAll('button')].find(b=>b.textContent==='Verify').click()");await until(()=>js("document.querySelector('.recovery-report')!==null"));await capture('phase9-backups.png');
   const catalog=await recovery('list');assert.equal(catalog.backups.length,1);dialog.showSaveDialog=async()=>({canceled:false,filePath:backupFile});await recovery('export',{id:catalog.backups[0].id});checks.push('native encrypted backup creation, verification and export');
   await js("document.querySelector('[aria-label=\"Close recovery\"]').click()");
-  await js(`window.broadcastCG.editorState('workspace',${JSON.stringify(project.id)},${JSON.stringify({projectId:project.id,sceneId:saved.project.scenes[0].id,view:'animate',time:1.25})})`);await reload();await until(()=>js("document.querySelector('.studio')?.dataset.view==='animate'"));
+  await js(`window.broadcastCG.editorState('workspace',${JSON.stringify(project.id)},${JSON.stringify({projectId:project.id,sceneId:saved.project.scenes[0].id,view:'animate',time:1.25})})`);await reload(project.id);await until(()=>js("document.querySelector('.studio')?.dataset.view==='animate'"));
   assert.equal(await js('window.broadcastCG.editorState("workspace").then(s=>s.projectId)'),project.id);checks.push('last workspace and animation view recover without replaying output');
   // Restore only this isolated smoke profile; production AppData is never used.
   const fresh=(await api('/api/projects/'+project.id)).value;fresh.project.name='Change after backup';await api('/api/projects',fresh);

@@ -11,6 +11,8 @@ import {parseSportOperation,applySportOperation} from '../lib/sports-logic.ts';
 import {boundedNumber} from '../lib/broadcast-tools.ts';
 import {exposedVariables} from './project-policy.mjs';
 import {ServiceError} from './service-error.mjs';
+import {createProjectLibrary} from './project-library-store.mjs';
+import {folderName} from '../lib/project-library.ts';
 export {ServiceError} from './service-error.mjs';
 import {createSecurity,migrateSecurity} from './security.mjs';
 import {createProjectPackage,unpackProjectPackage,projectDependencies} from './project-package.mjs';
@@ -155,12 +157,23 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     }
 
   function liveProgram(){if(!program)return null;const variables={...program.variables};for(const [key,value] of Object.entries(clocks.values(program.projectId)))if(Object.hasOwn(variables,key))variables[key]=value;return{...program,variables};}
+  function readRecovery(actor){
+    const row=db.prepare('SELECT document,revision,updated_at FROM recovery WHERE user_id=?').get(actor.user.id);
+    if(!row)return null;
+    const project=JSON.parse(row.document),saved=db.prepare('SELECT document,revision FROM projects WHERE id=?').get(project.id);
+    if(saved?!canAccess(actor,project.id):!actor.user.permissions.includes('projects.create'))return null;
+    if(saved?.document===row.document)return null;
+    return{project,revision:row.revision,updatedAt:row.updated_at,conflict:!!saved&&saved.revision!==row.revision};
+  }
+  const library=createProjectLibrary({db,settings,readProject,requirePermission,canAccess,record,now,program:()=>program,readJson,assertControl,assertIdle:id=>commands.assertIdle(id),recovery:readRecovery,
+    saveProject:(project,revision,context)=>route(new Request('broadcastcg://app/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project,revision})}),context)});
   async function route(request,context){
     const url=new URL(request.url),path=url.pathname,method=request.method;
     const outputRead=context===outputContext;
     if(outputRead&&(method!=='GET'||!(path==='/api/program'||path.startsWith('/api/assets/'))))throw new ServiceError('Output is read-only.',403);
     const actor=outputRead?null:actorFor(context);
     if(actor)requirePermission(actor,'projects.view');
+    if(path.startsWith('/api/library'))return library(request,context,()=>actorFor(context));
     if(path==='/api/commands'&&method==='POST'){const result=commands.submit(await readJson(request),context?.token);return json(result,result.duplicate?200:202);}
     if(path==='/api/commands'&&method==='GET')return json(commands.state(actor,url.searchParams.get('projectId')));
     if(path.startsWith('/api/commands/')){const id=decodeURIComponent(path.slice('/api/commands/'.length).replace(/\/cancel$/,''));if(method==='POST'&&path.endsWith('/cancel'))return json(commands.cancel(actor,id));if(method==='GET')return json(commands.get(actor,id));}
@@ -169,6 +182,8 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     if(path==='/api/projects'&&method==='POST'){
       const data=await readJson(request),project=clocks.project(validateProject(data.project)),stamp=now();commands.assertIdle(project.id);
       const current=actorFor(context),previous=db.prepare('SELECT document FROM projects WHERE id=?').get(project.id);
+      const libraryFolder=data.libraryFolder===undefined?undefined:folderName.parse(data.libraryFolder);
+      if(libraryFolder!==undefined&&previous)throw new ServiceError('Use the library to move a saved project.');
       assertControl(current,project.id);
       if(previous)requireWorkspace(current,project.id);
       checkProjectChanges(current,previous?JSON.parse(previous.document):null,project,requirePermission);validateAssets(current,project);
@@ -181,6 +196,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
         if(!old&&!current.user.allWorkspaces)db.prepare('INSERT INTO workspace_grants(user_id,project_id) VALUES(?,?)').run(current.user.id,project.id);
         db.prepare('DELETE FROM project_assets WHERE project_id=?').run(project.id);for(const id of assetIds(project))db.prepare('INSERT INTO project_assets(project_id,asset_id) VALUES(?,?)').run(project.id,id);
         settings.set('lastProject:'+current.user.id,project.id);
+        if(!old&&libraryFolder)settings.set('library:'+project.id,{version:1,folder:libraryFolder,tags:[],archived:false});
         // A credential is valid only for the endpoint it was configured for.
         if(previous){const oldSources=JSON.parse(previous.document).sources;for(const source of oldSources)if(!project.sources.some(s=>s.id===source.id&&s.url===source.url))db.prepare('DELETE FROM project_secrets WHERE project_id=? AND source_id=?').run(project.id,source.id);}
         record(old?'PROJECT_SAVED':'PROJECT_CREATED',project.id,'success',current,{projectId:project.id,previous:old?.revision||0,next});
@@ -193,7 +209,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     if(path.startsWith('/api/projects/')&&method==='GET'){
       const id=decodeURIComponent(path.slice('/api/projects/'.length)),row=readProject(actor,id);
       if(!row)throw new ServiceError('Project not found.',404);
-      settings.set('lastProject:'+actor.user.id,id);return json({project:row.project,revision:row.revision});
+      if(url.searchParams.get('inspect')!=='1')settings.set('lastProject:'+actor.user.id,id);return json({project:row.project,revision:row.revision});
     }
     if(path==='/api/program'&&method==='GET'){if(actor)requirePermission(actor,'outputs.view');return json(!program||outputRead||canAccess(actor,program.projectId)?liveProgram():null);}
     if(path==='/api/program'&&method==='POST')return json(await publishCommand(await readJson(request),context));
@@ -242,13 +258,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       db.prepare('INSERT INTO recovery(user_id,document,revision,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET document=excluded.document,revision=excluded.revision,updated_at=excluded.updated_at').run(current.user.id,JSON.stringify(project),Number.isSafeInteger(data.revision)?data.revision:0,now());
       return json({saved:true});
     }
-    if(path==='/api/desktop/recovery'&&method==='GET'){
-      const row=db.prepare('SELECT document,revision,updated_at FROM recovery WHERE user_id=?').get(actor.user.id);
-      if(!row)return json(null);
-      const project=JSON.parse(row.document),saved=db.prepare('SELECT document,revision FROM projects WHERE id=?').get(project.id);
-      if(saved?!canAccess(actor,project.id):!actor.user.permissions.includes('projects.create'))return json(null);if(saved?.document===row.document)return json(null);
-      return json({project,revision:row.revision,updatedAt:row.updated_at,conflict:!!saved&&saved.revision!==row.revision});
-    }
+    if(path==='/api/desktop/recovery'&&method==='GET')return json(readRecovery(actor));
     if(path==='/api/desktop/recovery'&&method==='DELETE'){db.prepare('DELETE FROM recovery WHERE user_id=?').run(actor.user.id);return json({cleared:true});}
     throw new ServiceError('Local operation is not supported.',404);
   }
