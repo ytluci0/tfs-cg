@@ -317,6 +317,7 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     session.defaultSession.webRequest.onBeforeRequest({urls:['*://*/*','file://*/*']},(details,callback)=>{const allowed=details.resourceType==='image'&&details.url.startsWith('https://');callback({cancel:!allowed});});
     registerIpc();menu();studio=createWindow('studio');
     studio.webContents.once('did-finish-load',()=>studio.webContents.setZoomFactor(settings().uiScale));
+    studio.webContents.on('before-input-event',(_event,input)=>{studio.webContents.setIgnoreMenuShortcuts((input.control||input.meta)&&!input.alt&&['z','y','c','x','v','a','s','0','1','+','=','-'].includes(input.key.toLowerCase()));});
     studio.on('close',event=>{
       if(!quitting&&(outputReady||broadcastOutput.info().running)&&!qa){const response=dialog.showMessageBoxSync(studio,{type:'warning',title:'Close BroadcastCG?',message:'Closing BroadcastCG will disconnect its output. An external receiver may hold its last graphic.',buttons:['Keep running','Close application'],defaultId:0,cancelId:0});if(response===0){event.preventDefault();return;}}
     });

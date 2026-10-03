@@ -1,3 +1,4 @@
+import {compoundSchema} from './editing-schema.ts';
 import {z} from 'zod';
 import {layerMaskSchema} from './design-schema.ts';
 
@@ -9,10 +10,11 @@ export const appearanceSchema=z.object({
  icon:z.string().max(16).optional(),image:z.string().max(2000).optional(),label:z.string().max(100).optional(),
 });
 export const visualSchema=z.object({
- layerMask:layerMaskSchema.optional(),
+ compound:compoundSchema.optional(),layerMask:layerMaskSchema.optional(),
  blend:z.enum(['normal','multiply','screen','overlay','darken','lighten','difference','exclusion']).optional(),clipLayer:z.string().max(100).optional(),gradientStops:z.array(z.object({offset:z.number().min(0).max(1),color:z.string().max(100)})).min(2).max(12).optional(),
  fill:z.enum(['solid','linear','radial','none']).optional(),gradientColor:z.string().max(100).optional(),gradientAngle:z.number().min(-360).max(360).optional(),
  stroke:z.string().max(100).optional(),strokeWidth:z.number().min(0).max(100).optional(),
+ strokeCap:z.enum(['butt','round','square']).optional(),strokeJoin:z.enum(['miter','round','bevel']).optional(),
  shadowColor:z.string().max(100).optional(),shadowX:z.number().min(-200).max(200).optional(),shadowY:z.number().min(-200).max(200).optional(),shadowBlur:z.number().min(0).max(100).optional(),
  glowColor:z.string().max(100).optional(),glow:z.number().min(0).max(100).optional(),blur:z.number().min(0).max(50).optional(),
  imageFit:z.enum(['cover','contain','stretch']).optional(),cropX:z.number().min(0).max(100).optional(),cropY:z.number().min(0).max(100).optional(),cropZoom:z.number().min(1).max(10).optional(),mask:z.enum(['none','rounded','ellipse']).optional(),

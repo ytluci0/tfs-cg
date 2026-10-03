@@ -30,6 +30,8 @@ Sessions expire after 30 minutes without user input or after 12 hours total. Bac
 
 Unsaved recovery drafts belong to individual users. They are saved after a short debounce, and sign-out attempts to flush the latest draft. A recovery conflict can be opened as a new project only when the user has permission to create one. Program is independent of draft recovery. Optional [self-hosted production mode](LAN-PRODUCTION.md) provides shared state and authoritative clocks.
 
+From 0.21.4, local session expiry hides and locks the open editor while retaining its draft in memory. Sign in with the same account to resume after workspace access is rechecked. Keep the window open until the draft is saved; changes made after the last recovery write are not yet on disk. Unsent button presses are cancelled at lock and never replayed after sign-in. Active input is counted even when editor controls consume pointer or keyboard events. Failed saves before command submission release the control lock; unknown dispatched outcomes remain subject to service verification without automatic retries.
+
 ## Audit and storage
 
 Audit history can be filtered by username, action, workstation, workspace ID and local date/time. It shows the newest 500 matching events: sign-ins, failures, account/session changes, permission denials, project/graphic/panel changes, exposed variable before/after values, data fetches and acknowledged/unconfirmed output commands. Passwords, session tokens and request-header values are excluded. Graphic/panel events identify the affected item and its old/new name, not a full version history. The audit is local SQLite history, not a tamper-evident external log.

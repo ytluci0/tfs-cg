@@ -1,3 +1,5 @@
+import {remapLayerLinks,linkedLayerIds} from './layer-links.ts';
+import {resolveFormulas} from './property-formulas.ts';
 import {atTime,layer,moveLayer,textValue,uid,type Layer,type Project,type Scene} from './studio-model.ts';
 
 export function vectorPath(l:Layer):string{
@@ -6,6 +8,8 @@ export function vectorPath(l:Layer):string{
  return `M ${pts[0].x*l.width} ${pts[0].y*l.height} `+pts.slice(1).map((p,i)=>segment(pts[i],p)).join(' ')+(l.visual?.closed!==false?' '+segment(pts[pts.length-1],pts[0])+' Z':'');
 }
 export function groupTransform(g:NonNullable<Scene['groups']>[number]){const t=g.transform;return t?`translate(${t.x} ${t.y}) translate(${t.originX} ${t.originY}) rotate(${t.rotation}) scale(${t.scaleX} ${t.scaleY}) translate(${-t.originX} ${-t.originY})`:undefined;}
+/** Resolve instance data for media/font preparation without changing scene hierarchy. */
+export function compositionLayers(scene:Scene,variables:Project['variables'],resources:Scene[]=[],depth=0):Layer[]{return expandRows(scene,variables).layers.filter(l=>l.visible).flatMap(l=>{if(l.composition&&depth<4){const child=resources.find(s=>s.id===l.composition!.sceneId);if(!child)return [];const values={...variables,...Object.fromEntries(Object.entries(l.composition.variables).map(([key,v])=>[key,typeof v==='string'?textValue(v,variables):v]))};return compositionLayers(child,values,resources,depth+1);}return [{...l,text:textValue(l.text,variables),src:textValue(l.src,variables),color:textValue(l.color,variables)}];});}
 export function repeatRows(g:NonNullable<Scene['groups']>[number]){
  const r=g.repeat;if(!r)return[];let rows=[...r.rows];if(r.sortBy)rows.sort((a,b)=>{const x=a[r.sortBy!],y=b[r.sortBy!];return (typeof x==='number'&&typeof y==='number'?x-y:String(x??'')<String(y??'')?-1:String(x??'')>String(y??'')?1:0)*(r.descending?-1:1);});return rows.slice(0,r.limit);
 }
@@ -22,16 +26,16 @@ export function expandRows(scene:Scene,variables:Project['variables']):Scene{
    const values:Project['variables']={...variables,...Object.fromEntries(Object.entries(row).map(([k,v])=>['row.'+k,v])),'row.rank':i+1};
    for(const base of scene.layers.filter(l=>l.groupId===g.id)){
     let l=JSON.parse(JSON.stringify(base).replace(/\{\{\s*(row\.[^{}]+?)\s*\}\}/g,(_,key)=>JSON.stringify(String(values[key]??'')).slice(1,-1))) as Layer;
-    l={...l,id:base.id+suffix,groupId,layout:l.layout?{...l.layout,target:l.layout.target?l.layout.target+suffix:undefined}:undefined,visual:l.visual?{...l.visual,clipLayer:l.visual.clipLayer?l.visual.clipLayer+suffix:undefined}:undefined};layers.push(l);
+    l={...remapLayerLinks(l,new Map(scene.layers.filter(v=>v.groupId===g.id).map(v=>[v.id,v.id+suffix]))),id:base.id+suffix,groupId,layout:l.layout?{...l.layout,target:l.layout.target?l.layout.target+suffix:undefined}:undefined,visual:l.visual?{...l.visual,clipLayer:l.visual.clipLayer?l.visual.clipLayer+suffix:undefined}:undefined};layers.push(l);
    }
   });
  }
  return {...scene,groups:expanded,layers};
 }
 export function resolveLayout(scene:Scene,time:number,variables:Project['variables'],measure:(l:Layer,text:string)=>number):Scene{
- const byId=new Map(scene.layers.map(l=>[l.id,l])),resolved=new Map<string,Layer>(),visiting=new Set<string>();
- function resolve(base:Layer):Layer{if(resolved.has(base.id))return resolved.get(base.id)!;if(visiting.has(base.id))return atTime(base,time);visiting.add(base.id);
-  const l=atTime(base,time),v=l.layout;
+ scene=resolveFormulas({...scene,layers:scene.layers.map(l=>atTime(l,time))},time,variables).scene;const byId=new Map(scene.layers.map(l=>[l.id,l])),resolved=new Map<string,Layer>(),visiting=new Set<string>();
+ function resolve(base:Layer):Layer{if(resolved.has(base.id))return resolved.get(base.id)!;if(visiting.has(base.id))return base;visiting.add(base.id);
+  const l={...base},v=l.layout;
   if(v?.mode==='text'){const content=textValue(l.text,variables),pad=v.padding??0,min=v.minWidth??1,max=Math.max(min,v.maxWidth??scene.width);l.width=Math.min(max,Math.max(min,measure(l,content)+pad*2));}
   const target=v?.target?byId.get(v.target):undefined;if(v&&target&&target.groupId===base.groupId){const other=resolve(target),gap=v.gap??0,pad=v.padding??12;
    if(v.mode==='fit'){l.x=other.x-pad;l.y=other.y-pad;l.width=other.width+pad*2;l.height=other.height+pad*2;}
@@ -46,6 +50,7 @@ export function makeGraphicComponent(project:Project,sceneId:string,ids:string[]
  const scene=project.scenes.find(s=>s.id===sceneId);if(!scene)throw Error('Choose a scene.');const selected=scene.layers.filter(l=>ids.includes(l.id));
  if(!selected.length||selected.length>100)throw Error('Select 1–100 layers.');if(selected.some(l=>l.groupId))throw Error('Ungroup selected layers before saving a graphic component.');
  const x=Math.min(...selected.map(l=>l.x)),y=Math.min(...selected.map(l=>l.y)),set=new Set(ids);
+ if(selected.some(l=>linkedLayerIds(l).some(id=>!set.has(id))))throw Error('Select all linked layers before creating a component.');
  const layers=selected.map(l=>({...moveLayer(structuredClone(l),l.x-x,l.y-y),graphicLink:undefined,layout:l.layout?.target&&!set.has(l.layout.target)?undefined:l.layout,visual:l.visual?.clipLayer&&!set.has(l.visual.clipLayer)?{...l.visual,clipLayer:undefined}:l.visual}));
  return {...project,graphicComponents:[...(project.graphicComponents||[]),{id:uid(),name:name.trim()||'Graphic component',layers}]};
 }
@@ -55,17 +60,17 @@ export function insertGraphicComponent(p:Project,sceneId:string,id:string,prefix
  const component=p.graphicComponents?.find(c=>c.id===id),scene=p.scenes.find(s=>s.id===sceneId);if(!component||!scene)throw Error('Graphic component is missing.');if(scene.layers.length+component.layers.length>250)throw Error('Scene supports 250 layers.');
  const map=new Map(component.layers.map(l=>[l.id,uid()])),instanceId=uid(),variables={...p.variables};
  const layers=component.layers.map(base=>{for(const [,key] of JSON.stringify(base).matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g))if(Object.hasOwn(p.variables,key)&&!Object.hasOwn(variables,prefix+key))variables[prefix+key]=p.variables[key];
-  const l=substitute(base,prefix) as Layer;return {...moveLayer(l,l.x+100,l.y+100),id:map.get(base.id)!,groupId:undefined,layout:l.layout?{...l.layout,target:map.get(l.layout.target||'')}:undefined,visual:l.visual?{...l.visual,clipLayer:map.get(l.visual.clipLayer||'')}:undefined,graphicLink:{componentId:id,layerId:base.id,instanceId,prefix,offsetX:100,offsetY:100}};
+  const l=substitute(base,prefix) as Layer;return {...remapLayerLinks(moveLayer(l,l.x+100,l.y+100),map),id:map.get(base.id)!,groupId:undefined,layout:l.layout?{...l.layout,target:map.get(l.layout.target||'')}:undefined,visual:l.visual?{...l.visual,clipLayer:map.get(l.visual.clipLayer||'')}:undefined,graphicLink:{componentId:id,layerId:base.id,instanceId,prefix,offsetX:100,offsetY:100}};
  });return {...p,variables,scenes:p.scenes.map(s=>s.id===sceneId?{...s,layers:[...s.layers,...layers]}:s)};
 }
 export function publishGraphicComponent(p:Project,sceneId:string,instanceId:string):Project{
  const scene=p.scenes.find(s=>s.id===sceneId),members=scene?.layers.filter(l=>l.graphicLink?.instanceId===instanceId)||[],link=members[0]?.graphicLink,component=p.graphicComponents?.find(c=>c.id===link?.componentId);
  if(!component||!link||component.layers.length!==members.length||component.layers.some(l=>!members.some(m=>m.graphicLink?.layerId===l.id)))throw Error('Publish requires a complete linked instance.');
  const original=new Map(members.map(l=>[l.id,l.graphicLink!.layerId]));
- const canonical=members.map(l=>{let next={...moveLayer(l,l.x-link.offsetX,l.y-link.offsetY),id:l.graphicLink!.layerId,groupId:undefined,graphicLink:undefined,layout:l.layout?{...l.layout,target:original.get(l.layout.target||'')}:undefined,visual:l.visual?{...l.visual,clipLayer:original.get(l.visual.clipLayer||'')}:undefined};
+ const canonical=members.map(l=>{let next={...remapLayerLinks(moveLayer(l,l.x-link.offsetX,l.y-link.offsetY),original),id:l.graphicLink!.layerId,groupId:undefined,graphicLink:undefined,layout:l.layout?{...l.layout,target:original.get(l.layout.target||'')}:undefined,visual:l.visual?{...l.visual,clipLayer:original.get(l.visual.clipLayer||'')}:undefined};
   if(link.prefix)next=JSON.parse(JSON.stringify(next).replace(/\{\{\s*([^{}]+?)\s*\}\}/g,(_,k)=>'{{'+(k.startsWith(link.prefix)?k.slice(link.prefix.length):k)+'}}'));return next;
  });
- return {...p,graphicComponents:p.graphicComponents?.map(c=>c.id===component.id?{...c,layers:canonical}:c),scenes:p.scenes.map(s=>({...s,layers:s.layers.map(l=>{const ref=l.graphicLink;if(ref?.componentId!==component.id)return l;const base=canonical.find(b=>b.id===ref.layerId);if(!base)return l;const ids=new Map(s.layers.filter(x=>x.graphicLink?.instanceId===ref.instanceId).map(x=>[x.graphicLink!.layerId,x.id]));const next=substitute(base,ref.prefix) as Layer;return {...moveLayer(next,next.x+ref.offsetX,next.y+ref.offsetY),id:l.id,groupId:l.groupId,graphicLink:ref,layout:next.layout?{...next.layout,target:ids.get(next.layout.target||'')}:undefined,visual:next.visual?{...next.visual,clipLayer:ids.get(next.visual.clipLayer||'')}:undefined};})}))};
+ return {...p,graphicComponents:p.graphicComponents?.map(c=>c.id===component.id?{...c,layers:canonical}:c),scenes:p.scenes.map(s=>({...s,layers:s.layers.map(l=>{const ref=l.graphicLink;if(ref?.componentId!==component.id)return l;const base=canonical.find(b=>b.id===ref.layerId);if(!base)return l;const ids=new Map(s.layers.filter(x=>x.graphicLink?.instanceId===ref.instanceId).map(x=>[x.graphicLink!.layerId,x.id]));const next=substitute(base,ref.prefix) as Layer;return {...remapLayerLinks(moveLayer(next,next.x+ref.offsetX,next.y+ref.offsetY),ids),id:l.id,groupId:l.groupId,graphicLink:ref,layout:next.layout?{...next.layout,target:ids.get(next.layout.target||'')}:undefined,visual:next.visual?{...next.visual,clipLayer:ids.get(next.visual.clipLayer||'')}:undefined};})}))};
 }
 export function dataGraphicPreset(scene:Scene,kind:string):Scene{
  if(scene.layers.length+4>250)throw Error('Scene supports 250 layers.');const groupId=uid(),rows=Array.from({length:kind==='bracket'?7:5},(_,i)=>({name:kind==='lineup'?'Player '+(i+1):'Team '+(i+1),score:10-i,photo:''}));

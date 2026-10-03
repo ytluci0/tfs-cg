@@ -1,4 +1,6 @@
-# Design workspace — BroadcastCG 0.15
+# Design workspace
+
+The shared [Properties inspector](PROPERTIES-INSPECTOR.md) organizes layer editing into Transform, Style, Motion, Masks and Data tabs, with section search, numeric scrubbing and separate scene settings.
 
 ## Canvas navigation
 
@@ -17,18 +19,18 @@ Use the top workspace buttons to show hidden panels, or **Reset layout** to rest
 
 ## Drawing and layers
 
-The tool rail provides Select (**V**), Hand (**H**), Text (**T**), Rectangle (**U**), Ellipse (**O**), Line (**L**) and Polygon (**P**). Choose a fill color, then drag on the canvas. Hold Shift for squares/circles. Click polygon points and press Enter or Finish polygon to close it; Escape cancels. For a curved vector, edit its points and handles in the existing vector inspector.
+The grouped [design toolbox](DESIGN-TOOLBOX.md) provides selection tools, drawing brushes, shapes, masks, gradients, fill and color sampling. Click **»** to show tool names. Choose a foreground color, then drag on the canvas. Hold Shift for squares/circles. Click polygon points and press Enter or Finish polygon to close it; Escape cancels. Use **P** for curved Pen paths and **A** to edit their points and handles.
 
 The top toolbar still provides images, arrows, video, tickers and countdowns. Uploaded images can also be dropped onto the canvas.
 
-Search or filter the Layers panel. Shift/Ctrl-click selects multiple layers. Use the toolbar to duplicate, group or delete selected unlocked layers. Double-click a layer name to rename it. Drag a row onto another row to place it above that layer within the same parent group. Eye and lock buttons control visibility and editing. Linked layout/clipping layers must be grouped together.
+Search or filter the Layers panel. Shift/Ctrl-click selects multiple layers. Use the toolbar to duplicate, group or delete selected unlocked layers. Single and double clicks select a layer; press **F2** on its row or click its pencil to rename it. **Enter** finishes the rename and **Escape** cancels it, returning focus to layer shortcuts. Drag a row onto another row to place it above that layer within the same parent group. Eye and lock buttons control visibility and editing. Linked layout/clipping layers must be grouped together.
 
 ## Editable masks
 
 Select a layer and click its mask icon, or **Add layer mask** in Properties. Masks apply to text, shapes, images and other layer types without altering their source files.
 
 - Choose Full layer, Rectangle or Ellipse, or draw a rectangular/elliptical mask directly on the selected layer.
-- Use **Brush hide** (**B**) and **Brush reveal** to paint the mask. The brush size is a percentage of the layer's shorter dimension. Start a stroke inside the selected visible, unlocked layer.
+- Use **Eraser mask** (**E**) and **Restore mask** (**Shift+E**) to paint the mask. The brush size is a percentage of the layer's shorter dimension. Start a stroke inside the selected visible, unlocked layer. **B** now draws a separate vector brush layer.
 - **Invert**, **Density** and **Feather** adjust the mask. Shape bounds are editable percentages.
 - Undo mask stroke removes the most recent stroke. Clear mask strokes retains the shape. Remove layer mask reveals the original artwork.
 - Completed strokes, drawn layers and mask changes participate in project Undo/Redo. A mask supports 100 strokes of up to 300 points each; the normal project size limit still applies.

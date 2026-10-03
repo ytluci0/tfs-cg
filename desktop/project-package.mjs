@@ -2,10 +2,10 @@ import {createHash} from 'node:crypto';
 import {ServiceError} from './service-error.mjs';
 const sha=value=>createHash('sha256').update(value).digest('hex');
 export function projectDependencies(project){
- return{fonts:[...new Set(project.scenes.flatMap(s=>s.layers.filter(l=>l.type==='text').map(l=>l.fontFamily)))].sort(),external:[...new Set([...JSON.stringify(project).matchAll(/https?:\/\/[^"\s]+/g)].map(m=>m[0]))].sort(),credentials:'Configure on the destination; not included',embeddedMedia:['PNG','JPEG','WebP','MP4','WebM']};
+ return{fonts:[...new Set(project.scenes.flatMap(s=>s.layers.filter(l=>l.type==='text').flatMap(l=>[l.fontFamily,...(l.typography?.runs||[]).map(r=>r.fontFamily).filter(Boolean)])))].sort(),external:[...new Set([...JSON.stringify(project).matchAll(/https?:\/\/[^"\s]+/g)].map(m=>m[0]))].sort(),credentials:'Configure on the destination; not included',embeddedMedia:['PNG','JPEG','WebP','MP4','WebM']};
 }
 export function createProjectPackage(project,assets){
- const document={format:'broadcastcg-package',version:1,application:'BroadcastCG',minimumVersion:'0.16.0',project,assets,manifest:{projectSha256:sha(JSON.stringify(project)),assets:assets.map(a=>({id:a.id,name:a.name,mime:a.mime,size:Buffer.from(a.bytes,'base64').length,sha256:sha(Buffer.from(a.bytes,'base64'))})),dependencies:projectDependencies(project)}};
+ const document={format:'broadcastcg-package',version:1,application:'BroadcastCG',minimumVersion:'0.19.0',project,assets,manifest:{projectSha256:sha(JSON.stringify(project)),assets:assets.map(a=>({id:a.id,name:a.name,mime:a.mime,size:Buffer.from(a.bytes,'base64').length,sha256:sha(Buffer.from(a.bytes,'base64'))})),dependencies:projectDependencies(project)}};
  return document;
 }
 export function unpackProjectPackage(data){

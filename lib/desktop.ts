@@ -1,6 +1,7 @@
 import type {AeDraft,AeOptions} from './ae-model';
 import type {PsdDraft,PsdOptions} from './psd-model';
 import type {Project,Program} from './studio-model';
+import {unwrapServiceResult,type ServiceResult} from './service-result';
 export type DesktopStatus={local:boolean;database:string;output:string;outputUnconfirmed:boolean;authentication:string;network:string;serverName?:string;serverUrl?:string;engineAttached?:boolean;clients?:number;engine?:{username:string;workstation:string}|null};
 export type ServerProfile={id?:string;name:string;url:string;fingerprint:string};
 export type WorkspaceLease={projectId:string;required:boolean;mine:boolean;owner:{sessionId:string;username:string;workstation:string;expiresAt:number}|null;requests:{username:string;workstation:string;time:number}[]};
@@ -22,6 +23,7 @@ export type DesktopBridge={
  commitPsd:(options:PsdOptions)=>Promise<{project:Project;revision:number;sceneId:string}>;
  cancelPsd:()=>Promise<boolean>;
  auth:<T=unknown>(action:string,data?:unknown)=>Promise<T>;
+ authResult?:<T=unknown>(action:string,data?:unknown)=>Promise<ServiceResult<T>>;
  info:()=>Promise<DesktopStatus&{name:string;version:string;dataDirectory:string;phase:string}>;
  status:()=>Promise<DesktopStatus>;
  settings:()=>Promise<DesktopSettings>;
@@ -34,4 +36,11 @@ export type DesktopBridge={
  onProgram:(listener:(program:Program)=>void)=>()=>void;
 };
 declare global{interface Window{broadcastCG?:DesktopBridge}}
-export function desktopBridge(){return typeof window==='undefined'?undefined:window.broadcastCG;}
+const bridges=new WeakMap<DesktopBridge,DesktopBridge>();
+export function desktopBridge(){
+ const raw=typeof window==='undefined'?undefined:window.broadcastCG;
+ if(!raw?.authResult)return raw;
+ let bridge=bridges.get(raw);
+ if(!bridge){bridge={...raw,auth:async<T,>(action:string,data?:unknown)=>unwrapServiceResult(await raw.authResult!<T>(action,data))};bridges.set(raw,bridge);}
+ return bridge;
+}

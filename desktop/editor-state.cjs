@@ -7,8 +7,8 @@ function clean(section,value){
   return{projectId:value.projectId,sceneId:value.sceneId,view:value.view,time:value.time};
  }
  if(section==='panel'){
-  if(!id(value.panelId)||!['build','operate'].includes(value.mode)||!(value.zoom==='fit'||Number.isFinite(value.zoom)&&value.zoom>=.1&&value.zoom<=4)||!Array.isArray(value.selection)||value.selection.length>500||!value.selection.every(id))throw Error('Invalid panel position.');
-  return{panelId:value.panelId,mode:value.mode,zoom:value.zoom,selection:[...new Set(value.selection)]};
+  if(!id(value.panelId)||!['build','operate'].includes(value.mode)||!(['fit','workspace'].includes(value.zoom)||Number.isFinite(value.zoom)&&value.zoom>=.1&&value.zoom<=4)||!Array.isArray(value.selection)||value.selection.length>500||!value.selection.every(id))throw Error('Invalid panel position.');
+  return{panelId:value.panelId,mode:value.mode,zoom:value.zoom,selection:[...new Set(value.selection)],...(value.viewportVersion===2?{viewportVersion:2}:{})};
  }
  if(section==='design'){
   const number=(v,min,max)=>Number.isFinite(v)&&v>=min&&v<=max;

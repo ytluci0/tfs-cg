@@ -2,12 +2,13 @@ import {atTime,properties,propertyValue,type Keyframe,type Layer,type Property,t
 
 export type TimelineKey={layerId:string;property:Property;time:number};
 export type CopiedTimelineKey=TimelineKey&{key:Keyframe};
-export const propertyLabels:Record<Property,string>={x:'Position X',y:'Position Y',width:'Width',height:'Height',rotation:'Rotation',opacity:'Opacity',anchorX:'Anchor X',anchorY:'Anchor Y',scaleX:'Scale X',scaleY:'Scale Y'};
+export const propertyLabels:Record<Property,string>={x:'Position X',y:'Position Y',width:'Width',height:'Height',rotation:'Rotation',opacity:'Opacity',anchorX:'Anchor X',anchorY:'Anchor Y',scaleX:'Scale X',scaleY:'Scale Y',pathProgress:'Path progress'};
 export const sameKeyTime=(a:number,b:number)=>Math.abs(a-b)<.000001;
 export const keyIdentity=(key:TimelineKey)=>JSON.stringify([key.layerId,key.property,Math.round(key.time*1e6)]);
 export const roundKeyTime=(time:number)=>Math.round(time*1e6)/1e6;
-export const percentProperty=(property:Property)=>['opacity','scaleX','scaleY'].includes(property);
-export function propertyBounds(property:Property){return property==='opacity'?{min:0,max:1}:property==='width'||property==='height'?{min:.001,max:20000}:property.startsWith('scale')?{min:-10000,max:10000}:{};}
+export const percentProperty=(property:Property)=>['opacity','scaleX','scaleY','pathProgress'].includes(property);
+export function timelineSourceValue(layer:Layer,property:Property,time:number){return propertyValue(atTime(property==='pathProgress'?layer:{...layer,motionPath:undefined},time),property);}
+export function propertyBounds(property:Property){return (property==='opacity'||property==='pathProgress')?{min:0,max:1}:property==='width'||property==='height'?{min:.001,max:20000}:property.startsWith('scale')?{min:-10000,max:10000}:{};}
 function boundedValue(property:Property,value:number){if(!Number.isFinite(value))throw Error('Enter a finite property value.');const {min=-Infinity,max=Infinity}=propertyBounds(property);return Math.max(min,Math.min(max,value));}
 function putKey(keys:Keyframe[],key:Keyframe){const next=[...keys.filter(k=>!sameKeyTime(k.time,key.time)),key].sort((a,b)=>a.time-b.time);if(next.length>1000)throw Error('A property supports up to 1000 keys.');return next;}
 export function setTimelineValue(layer:Layer,property:Property,time:number,value:number,forceKey=false,ease:Keyframe['ease']='linear'):Layer{
@@ -20,7 +21,7 @@ export function setTimelineValue(layer:Layer,property:Property,time:number,value
 export function disableTimelineTrack(layer:Layer,property:Property,time:number):Layer{
  if(layer.locked)throw Error('Unlock the layer before editing its animation.');
  const keys={...layer.keys};delete keys[property];
- return {...layer,[property]:boundedValue(property,propertyValue(atTime(layer,time),property)),keys};
+ return {...layer,[property]:boundedValue(property,timelineSourceValue(layer,property,time)),keys};
 }
 export function resolveTimelineKeys(scene:Scene,refs:TimelineKey[]):CopiedTimelineKey[]{
  const unique=new Map<string,CopiedTimelineKey>();

@@ -1,5 +1,6 @@
 'use client';
 import {ButtonArtwork} from './button-artwork';
+import {desktopBridge} from '@/lib/desktop';
 import {useEffect,useRef,useState} from 'react';
 import {Input} from '@/components/ui/input';
 import {controlActions,controlCondition,selectorOptions,type ControlEvent} from '@/lib/creative-tools';
@@ -9,12 +10,16 @@ type Run=(c:Control,event?:ControlEvent,value?:string)=>Promise<void>;
 export function ActionButton({control:c,project,disabled,run,onError,preview=false,onEmptyClick}:{control:Control;project:Project;disabled:boolean;run:Run;onError:(e:unknown)=>void;preview?:boolean;onEmptyClick?:()=>void}){
  const [hover,setHover]=useState(false),[pressed,setPressed]=useState(false),[working,setWorking]=useState(false),timer=useRef<ReturnType<typeof setTimeout>|null>(null),down=useRef(false),held=useRef(false),mounted=useRef(true),pending=useRef(Promise.resolve()),failed=useRef(false),latest=useRef({c,run,onError});latest.current={c,run,onError};
  useEffect(()=>{mounted.current=true;const cancel=()=>{down.current=false;setPressed(false);if(timer.current)clearTimeout(timer.current);};window.addEventListener('blur',cancel);return()=>{mounted.current=false;cancel();window.removeEventListener('blur',cancel);};},[]);
+ const [showWorking,setShowWorking]=useState(false);
+ useEffect(()=>{if(!working){setShowWorking(false);return;}const id=setTimeout(()=>setShowWorking(true),180);return()=>clearTimeout(id);},[working]);
  const live=!!c.liveWhen&&controlCondition(c.liveWhen,project.variables),state=preview?'normal':disabled&&!working?'disabled':pressed?'pressed':live?'live':hover?'hover':'normal';
  const style={background:c.color,foreground:'#ffffff',radius:8,fontSize:c.fontSize||18,borderWidth:0,borderColor:c.color,...c.appearance,...(state==='normal'?{}:c.stateStyles?.[state])};
  const value=(s:string|undefined)=>textValue(s||'',project.variables),image=value(style.image);
  function fire(event:ControlEvent){
   const actions=controlActions(latest.current.c,event);if(!actions.length){if(event==='click')onEmptyClick?.();return pending.current;}
-  pending.current=pending.current.then(async()=>{if(!mounted.current||failed.current)return;setWorking(true);try{await latest.current.run(latest.current.c,event);}catch(e){failed.current=true;down.current=false;if(timer.current)clearTimeout(timer.current);latest.current.onError(e);}finally{if(mounted.current)setWorking(false);}});return pending.current;
+  const task=async()=>{if(!mounted.current||failed.current)return;setWorking(true);try{await latest.current.run(latest.current.c,event);}catch(e){failed.current=true;down.current=false;if(timer.current)clearTimeout(timer.current);latest.current.onError(e);}finally{if(mounted.current)setWorking(false);}};
+  // Desktop commands share a single ordered queue across every control.
+  pending.current=desktopBridge()?task():pending.current.then(task);return pending.current;
  }
  function start(){if(disabled||down.current)return;failed.current=false;held.current=false;down.current=true;setPressed(true);void fire('press');if(c.events?.hold?.length){const repeat=async()=>{if(!down.current||!mounted.current||failed.current)return;held.current=true;await fire('hold');if(down.current&&!failed.current)timer.current=setTimeout(repeat,latest.current.c.holdRepeat||200);};timer.current=setTimeout(repeat,c.holdDelay||500);}}
  function stop(cancel=false){const was=down.current;down.current=false;setPressed(false);if(timer.current)clearTimeout(timer.current);if(was&&!cancel)void fire('release');if(cancel)held.current=true;}
@@ -22,7 +27,7 @@ export function ActionButton({control:c,project,disabled,run,onError,preview=fal
   onPointerDown={e=>{if(e.button!==0)return;e.currentTarget.setPointerCapture(e.pointerId);start();}} onPointerUp={e=>{stop();if(e.currentTarget.hasPointerCapture(e.pointerId))e.currentTarget.releasePointerCapture(e.pointerId);}} onPointerCancel={()=>stop(true)} onLostPointerCapture={()=>{if(down.current)stop(true);}}
   onKeyDown={e=>{if([' ','Enter'].includes(e.key)){e.preventDefault();if(!e.repeat)start();}}} onKeyUp={e=>{if([' ','Enter'].includes(e.key)){e.preventDefault();stop();if(!held.current)void fire('click');}}}
   onClick={e=>{if(disabled&&!working)return;if(e.detail===0){failed.current=false;void fire('click');}else if(!held.current)void fire('click');}}>
-  {c.artwork?<ButtonArtwork art={c.artwork} variables={project.variables} state={state}/>:<>{safeImage(image)&&<img alt="" src={image}/>} {style.icon&&<span aria-hidden="true">{value(style.icon)}</span>}<strong style={{font:'inherit'}}>{value(style.label||c.label)}</strong><small>{working?'Running…':state==='live'?'Live':c.shortcut?'Shortcut '+c.shortcut.toUpperCase():controlActions(c).length+' actions'}</small></>}{c.artwork&&working&&<span className="art-running">Running…</span>}
+  {c.artwork?<ButtonArtwork art={c.artwork} variables={project.variables} state={state}/>:<>{safeImage(image)&&<img alt="" src={image}/>} {style.icon&&<span aria-hidden="true">{value(style.icon)}</span>}<strong style={{font:'inherit'}}>{value(style.label||c.label)}</strong><small>{showWorking?'Running…':state==='live'?'Live':c.shortcut?'Shortcut '+c.shortcut.toUpperCase():controlActions(c).length+' actions'}</small></>}{c.artwork&&showWorking&&<span className="art-running">Running…</span>}
  </button>;
 }
 export function DataSelector({control:c,project,disabled,run,onError}:{control:Control;project:Project;disabled:boolean;run:Run;onError:(e:unknown)=>void}){

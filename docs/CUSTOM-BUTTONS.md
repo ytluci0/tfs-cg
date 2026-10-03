@@ -2,6 +2,17 @@
 
 Open **Panels → Build**. The left sidebar starts with **Build from individual parts**. Add a blank action button, artwork, text, image, pitch marking, player button or match control. Each part has its own position and size. The existing widgets and saved tool library remain available below.
 
+## Canvas navigation
+
+Free-layout panels use the full available workspace width. **Fit width** enlarges small canvases as well as shrinking large ones; **100%** shows original canvas pixels and centers the canvas when there is room. Zoom changes the view only: saved control sizes, positions, bindings and actions stay unchanged.
+
+- **Canvas only** hides both sidebars in Build. **Show panels** brings them back.
+- **Ctrl+mouse wheel** zooms around the pointer. The zoom menu and + / − buttons are also available in Operate.
+- **Middle-drag** pans. In Build, you can also hold **Space** while dragging or select the **Hand** tool. Release Space or turn Hand off to move controls again.
+- **Escape** cancels an active pan or control drag. A completed move/resize remains one project Undo step, at any zoom.
+
+Vertical scrolling keeps long panels accessible. Touch operation retains 100% control sizing. Canvas width and height in Panel settings define the saved area. In **Fill area**, dragging into extra workspace expands that saved area; changing the view alone does not rearrange your layout.
+
 ## Design a button
 
 1. Add **Blank action button**, select it, and click **Design button visually** in the inspector.
@@ -41,6 +52,10 @@ Inside a player button, `{{player.number}}`, `{{player.name}}`, `{{player.positi
 The former **Edit football layout** option still creates movable composite widgets. Use the new parts palette when you want to edit each item inside that layout.
 
 ## Reuse and persistence
+
+Panel navigation opens in **Fill area**: the canvas covers the available workspace at 100% button size. Dragging a control into the extra area expands the saved canvas in the same Undo step. Resizing the application by itself does not change saved control positions. **Fit width** scales the saved layout to the available width; **Canvas only** hides the Build sidebars.
+
+In Operate, buttons and counters stay responsive while local commands finish. Explicit presses are processed in order; failures or **Cancel sequence** clear pending presses instead of retrying them. Quick local actions return their confirmed result directly, and only longer operations show a Running indicator. Permissions, conditions and output acknowledgement still apply.
 
 Save a finished control to **Tool library → Saved**, or group several controls and save them through **Components**. Duplicating a pitch and its linked players remaps their internal links to the copied pitch. Copying a player alone makes it freely positioned. Prefixed component variables preserve scoped player bindings, artwork arrays and visual states. Linked component style publishing includes button artwork.
 

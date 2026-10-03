@@ -1,3 +1,11 @@
+import {sessionControlsSmoke} from './session-controls-smoke.mjs';
+import {panelViewportSmoke} from './panel-viewport-smoke.mjs';
+import {toolboxSmoke} from "./toolbox-smoke.mjs";
+import {layerShortcutsSmoke} from './layer-shortcuts-smoke.mjs';
+import {inspectorSmoke} from './inspector-smoke.mjs';
+import {videoSmoke} from './video-smoke.mjs';
+import {motionToolsSmoke} from './motion-tools-smoke.mjs';
+import {advancedEditingSmoke} from './advanced-editing-smoke.mjs';
 import assert from 'node:assert/strict';
 import {writeFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
@@ -34,9 +42,25 @@ export async function run({app,studio,dialog,openOutput,getOutput,service,direct
  const admin=await auth('setup',credentials);assert.equal(admin.user.role,'ADMIN');assert.equal(admin.token,undefined);assert.equal(admin.rememberToken,undefined);checks.push('first-run gate and private main-process tokens');
  const p=defaultProject();p.name='Stage 2 runtime QA';assert.equal((await api('/api/projects',{project:p,revision:0})).status,200);
  await reload();
+ if(process.argv.includes('--session-controls-only')){await sessionControlsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,credentials});writeFileSync(join(directory,'session-controls-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ if(process.argv.includes('--panel-viewport-only')){await panelViewportSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});writeFileSync(join(directory,'panel-viewport-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ if(process.argv.includes('--layer-shortcuts-only')){await layerShortcutsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});writeFileSync(join(directory,'layer-shortcuts-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ if(process.argv.includes("--toolbox-only")){await toolboxSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});await designSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});writeFileSync(join(directory,"toolbox-smoke-result.json"),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ if(process.argv.includes('--video-only')){await videoSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});writeFileSync(join(directory,'video-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ if(process.argv.includes('--inspector-only')){await inspectorSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});writeFileSync(join(directory,'inspector-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
  const layout=await js(`(()=>{const c=document.querySelector('.canvas-area .canvas-stage').getBoundingClientRect(),a=document.querySelector('.canvas-area').getBoundingClientRect();return {height:c.height,contained:c.top>=a.top&&c.bottom<=a.bottom+1&&c.left>=a.left&&c.right<=a.right+1};})()`);
  assert.ok(layout.height>200&&layout.contained,JSON.stringify(layout));
+ if(process.argv.includes('--motion-only')){await motionToolsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});writeFileSync(join(directory,'motion-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ if(process.argv.includes('--editing-only')){await advancedEditingSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});writeFileSync(join(directory,'editing-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ if(process.argv.includes('--output-only')){await outputSmoke({js,api,capture,checks,sleep,until});await ndiSmoke({js,api,capture,checks});writeFileSync(join(directory,'output-smoke-result.json'),JSON.stringify({ok:true,checks,time:new Date().toISOString()},null,2));app.exit(0);return;}
+ await layerShortcutsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
+ await toolboxSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
+ await videoSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
+ await inspectorSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
+ await motionToolsSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
  await librarySmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
+ await advancedEditingSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p,openOutput,getOutput});
+ await panelViewportSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await panelSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});
  await timelineSmoke({studio,js,api,reload,capture,checks,sleep,until,project:p});

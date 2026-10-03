@@ -12,7 +12,7 @@ function inspectDatabase(db){
  db.exec('PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON;');
  if(db.prepare('PRAGMA quick_check').get().quick_check!=='ok')throw Error('Backup database failed integrity verification.');
  const schemaVersion=db.prepare('PRAGMA user_version').get().user_version;
- if(schemaVersion<2||schemaVersion>7)throw Error('Backup schema is unsupported. Use a compatible BroadcastCG release.');
+ if(schemaVersion<2||schemaVersion>9)throw Error('Backup schema is unsupported. Use a compatible BroadcastCG release.');
  if(db.prepare("SELECT name FROM sqlite_master WHERE type IN ('trigger','view') LIMIT 1").get())throw Error('Backup contains unsupported database objects.');
  for(const name of ['projects','assets','settings','auth_users','auth_sessions','auth_remember','auth_failures','secrets','project_secrets'])if(!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(name))throw Error('Backup is missing '+name+'.');
  if(db.prepare('PRAGMA foreign_key_check').get())throw Error('Backup contains broken database relationships.');

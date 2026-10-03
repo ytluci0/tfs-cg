@@ -1,3 +1,4 @@
+import {validateFlow} from './visual-logic.ts';
 import {parseSportOperation} from './sports-logic.ts';
 import type {Action,ActionCondition,Project} from './studio-model.ts';
 export function checkCondition(when:ActionCondition,variables:Project['variables']):void{
@@ -10,7 +11,9 @@ export function conditionMatches(action:Action,variables:Project['variables']):b
 export type PlannedAction={action:Action;path:string;end:number;recovery?:{start:number;end:number};guards?:{index:number;value:boolean}[]};
 export function planActions(project:Project,actions:Action[]):PlannedAction[]{
  const result:PlannedAction[]=[];
- function visit(items:Action[],stack:string[],path:string,guards:{index:number;value:boolean}[]=[]){for(const a of items){if(result.length>=200)throw Error('A run supports at most 200 expanded steps.');if(a.when)checkCondition(a.when,project.variables);else if(a.condition.trim()&&!Object.hasOwn(project.variables,a.condition.split('=')[0].trim()))throw Error('Condition variable is missing.');
+ function visit(items:Action[],stack:string[],path:string,guards:{index:number;value:boolean}[]=[]){
+ if(items.some(a=>a.flow)){validateFlow(items);const byId=new Map(items.map(a=>[a.id,a]));function walk(id:string|undefined,branchGuards:{index:number;value:boolean}[],depth=0){if(!id)return;if(depth>100)throw Error('Logic path exceeds 100 blocks.');const a=byId.get(id)!;if(a.type==='decision'){if(result.length>=200)throw Error('A run supports at most 200 expanded steps.');checkCondition(a.when!,project.variables);const index=result.length;result.push({action:a,path,end:index+1,guards:branchGuards});walk(a.flow!.yes,[...branchGuards,{index,value:true}],depth+1);walk(a.flow!.no,[...branchGuards,{index,value:false}],depth+1);}else{visit([{...a,flow:undefined}],stack,path,branchGuards);walk(a.flow!.next,branchGuards,depth+1);}}walk(items.find(a=>a.flow!.entry)!.id,guards);return;}
+ for(const a of items){if(a.type==='decision')throw Error('Decision blocks must belong to a visual flow.');if(result.length>=200)throw Error('A run supports at most 200 expanded steps.');if(a.when)checkCondition(a.when,project.variables);else if(a.condition.trim()&&!Object.hasOwn(project.variables,a.condition.split('=')[0].trim()))throw Error('Condition variable is missing.');
   if(a.type==='sport')parseSportOperation(JSON.parse(a.value));
   if(a.type==='clock'){const options=JSON.parse(a.value);if(!['start','pause','reset','adjust'].includes(options.op))throw Error('Choose a clock operation.');}
   if(['set','increment','counter','clock'].includes(a.type)){if(!Object.hasOwn(project.variables,a.target))throw Error('Action refers to a missing variable: '+(a.target||'(choose a variable)'));if(a.type==='increment'&&typeof project.variables[a.target]!=='number')throw Error('Increment requires a numeric variable.');}

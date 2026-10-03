@@ -8,7 +8,7 @@ type Clock={at:number;base:number;direction:'up'|'down';formatted:boolean};
 export function usePanelClocks(project:Project,change:(fn:(p:Project)=>Project)=>void,execute:(fields:Record<string,unknown>)=>Promise<unknown>,onError:(error:unknown)=>void){
  const desktop=!!desktopBridge(),[remote,setRemote]=useState<Record<string,{seconds:number;value:string|number;direction:'up'|'down';running:boolean;interrupted:boolean}>>({}),[connectionLost,setConnectionLost]=useState(false);
  const remoteRef=useRef(remote);remoteRef.current=remote;
- async function refresh(){const id=projectRef.current.id;try{const value=await api<typeof remote>('/api/clocks?projectId='+encodeURIComponent(id));if(projectRef.current.id===id){remoteRef.current=value;setRemote(value);setConnectionLost(false);}}catch{setConnectionLost(true);}}
+ async function refresh(){const id=projectRef.current.id;try{const value=await api<typeof remote>('/api/clocks?projectId='+encodeURIComponent(id));if(projectRef.current.id===id){if(JSON.stringify(remoteRef.current)!==JSON.stringify(value)){remoteRef.current=value;setRemote(value);}setConnectionLost(false);}}catch{setConnectionLost(true);}}
  useEffect(()=>{if(!desktop)return;setRemote({});let active=true;const poll=async()=>{if(active)await refresh();};poll();const timer=setInterval(poll,250);return()=>{active=false;clearInterval(timer);};},[project.id,desktop]);
  async function send(fields:Record<string,unknown>){try{await execute(fields);await refresh();return true;}catch(e){onError(e);return false;}}
  const [timers,setTimers]=useState<Record<string,Clock>>({}),ref=useRef(timers),projectRef=useRef(project),projectId=useRef(project.id);ref.current=timers;projectRef.current=project;

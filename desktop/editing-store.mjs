@@ -1,0 +1,22 @@
+import {randomUUID} from 'node:crypto';
+import {z} from 'zod';
+import {ServiceError} from './service-error.mjs';
+const json=value=>Response.json(value,{headers:{'Cache-Control':'no-store'}});
+const metadata=z.object({name:z.string().trim().min(1).max(200),folder:z.string().trim().max(100),tags:z.array(z.string().trim().min(1).max(40)).max(20)});
+export function migrateEditing(db){db.exec(`BEGIN IMMEDIATE;
+ CREATE TABLE IF NOT EXISTS project_snapshots(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,name TEXT NOT NULL,document TEXT NOT NULL,revision INTEGER NOT NULL,created_at INTEGER NOT NULL,created_by TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS snapshot_assets(snapshot_id TEXT NOT NULL REFERENCES project_snapshots(id) ON DELETE CASCADE,asset_id TEXT NOT NULL REFERENCES assets(id),PRIMARY KEY(snapshot_id,asset_id));
+ PRAGMA user_version=8; COMMIT;`);}
+export function createEditingStore({db,settings,readProject,requirePermission,canReadAsset,readJson,assertControl,record,now}){
+ return async function editing(request,actor){const url=new URL(request.url),path=url.pathname,method=request.method;
+  if(path==='/api/media'&&method==='GET'){requirePermission(actor,'projects.view');const search=(url.searchParams.get('search')||'').toLowerCase(),folder=url.searchParams.get('folder');const offset=Math.max(0,Math.min(100000,Number(url.searchParams.get('offset'))||0));const rows=db.prepare('SELECT id,name,mime,length(bytes) AS size FROM assets ORDER BY rowid DESC').all().filter(a=>canReadAsset(actor,a.id)).map(a=>({...a,...settings.get('media:'+a.id,{}),url:'/api/assets/'+a.id}));const matches=rows.filter(a=>(!folder||a.folder===folder)&&(!search||[a.name,a.folder,...a.tags||[]].join(' ').toLowerCase().includes(search)));return json({assets:matches.slice(offset,offset+100),total:matches.length,folders:[...new Set(rows.map(a=>a.folder).filter(Boolean))].sort()});}
+  const media=path.match(/^\/api\/media\/([a-zA-Z0-9-]+)$/);if(media&&method==='POST'){requirePermission(actor,'graphics.edit');if(!canReadAsset(actor,media[1]))throw new ServiceError('Asset not found.',404);const value=metadata.parse(await readJson(request,10000));settings.set('media:'+media[1],value);record('MEDIA_ORGANIZED',media[1],'success',actor);return json(value);}
+  const match=path.match(/^\/api\/editing\/([^/]+)\/snapshots(?:\/([^/]+))?$/);if(!match)return null;const projectId=decodeURIComponent(match[1]),snapshotId=match[2],row=readProject(actor,projectId);requirePermission(actor,'projects.view');
+  if(method==='GET'&&!snapshotId)return json(db.prepare('SELECT id,name,revision,created_at FROM project_snapshots WHERE project_id=? ORDER BY created_at DESC').all(projectId));
+  if(method==='GET'&&snapshotId){const snapshot=db.prepare('SELECT * FROM project_snapshots WHERE id=? AND project_id=?').get(snapshotId,projectId);if(!snapshot)throw new ServiceError('Snapshot not found.',404);return json({...snapshot,document:undefined,project:JSON.parse(snapshot.document)});}
+  requirePermission(actor,'projects.edit');assertControl(actor,projectId);
+  if(method==='POST'&&!snapshotId){const data=z.object({name:z.string().trim().min(1).max(100),revision:z.number().int().positive()}).parse(await readJson(request,10000));if(data.revision!==row.revision)throw new ServiceError('The project changed. Save it again before creating a snapshot.',409);if(db.prepare('SELECT count(*) AS n FROM project_snapshots WHERE project_id=?').get(projectId).n>=20)throw new ServiceError('This project has 20 snapshots. Remove an unneeded snapshot before saving another.');const id=randomUUID(),document=JSON.stringify(row.project),assets=[...new Set([...document.matchAll(/\/api\/assets\/([a-zA-Z0-9-]+)/g)].map(m=>m[1]))];db.exec('BEGIN IMMEDIATE');try{db.prepare('INSERT INTO project_snapshots VALUES(?,?,?,?,?,?,?)').run(id,projectId,data.name,document,row.revision,now(),actor.user.id);for(const asset of assets)db.prepare('INSERT INTO snapshot_assets VALUES(?,?)').run(id,asset);db.exec('COMMIT');}catch(e){db.exec('ROLLBACK');throw e;}record('SNAPSHOT_CREATED',id,'success',actor,{projectId});return json({id});}
+  if(method==='DELETE'&&snapshotId){db.prepare('DELETE FROM project_snapshots WHERE id=? AND project_id=?').run(snapshotId,projectId);record('SNAPSHOT_REMOVED',snapshotId,'success',actor,{projectId});return json({ok:true});}
+  throw new ServiceError('Unsupported editing request.',405);
+ };
+}

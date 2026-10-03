@@ -19,7 +19,7 @@ export async function imageThumbnail(file:File){
 export async function sceneThumbnail(preview:ProjectPreview){
   // Use the shared renderer at a fixed time. Previews do not start media or data feeds.
   const scene={...preview.scene,layers:preview.scene.layers.filter(l=>l.type!=='video')};
-  const markup=renderToStaticMarkup(<Graphic scene={scene} time={preview.time} variables={preview.variables} id="library-cover"/>);
+  const markup=renderToStaticMarkup(<Graphic compositions={preview.compositions?.map(s=>({...s,layers:s.layers.filter(l=>l.type!=='video')}))} scene={scene} time={preview.time} variables={preview.variables} id="library-cover"/>);
   const doc=new DOMParser().parseFromString(markup,'image/svg+xml'),svg=doc.documentElement;
   svg.setAttribute('width',String(scene.width));svg.setAttribute('height',String(scene.height));
   for(const image of Array.from(svg.querySelectorAll('image'))){

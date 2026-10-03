@@ -1,3 +1,4 @@
+import {inspectorCategory} from './inspector-test-tools.mjs';
 import assert from 'node:assert/strict';
 import {writeFileSync,statSync} from 'node:fs';
 import {join} from 'node:path';
@@ -22,7 +23,7 @@ export async function psdSmoke({studio,dialog,js,api,reload,capture,checks,sleep
   const result=(await api('/api/projects/'+project.id)).value,scene=result.project.scenes.at(-1);assert.equal(scene.name,'Phase6-fixture');assert.equal(scene.layers.find(l=>l.name==='Presenter').type,'text');assert.equal(scene.layers.find(l=>l.name==='Presenter').fontFamily,'Arial');assert.equal(scene.groups.length,1);assert.equal((await api('/api/program')).value.revision,programBefore.revision);
   await click('PSD reference');assert.equal(await js("!!document.querySelector('.psd-saved-reference')"),true);await click('Show design');
   await js("[...document.querySelectorAll('.layer-select')].find(b=>b.textContent.includes('Presenter')).click()");
-  await js(`(()=>{const el=document.querySelector('.inspector textarea');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'EDITED LOCALLY');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);await click('Save');await sleep(250);
+  await inspectorCategory(js,sleep,'Style');await js(`(()=>{const el=document.querySelector('.inspector .layer-text-content');Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(el,'EDITED LOCALLY');el.dispatchEvent(new Event('input',{bubbles:true}));})()`);await click('Save');await sleep(250);
   let saved=(await api('/api/projects/'+project.id)).value;assert.equal(saved.project.scenes.at(-1).layers.find(l=>l.name==='Presenter').text,'EDITED LOCALLY');
   await capture('psd-import-designer.png');
   await reload();saved=(await api('/api/projects/'+project.id)).value;assert.equal(saved.project.scenes.at(-1).importReport.format,'psd');

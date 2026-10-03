@@ -60,6 +60,9 @@
 .desktop-workspace .studio > .timeline.advanced-timeline {
   max-height: min(60dvh, max(220px, calc(100dvh - 500px)));
 }
+@media (max-height: 800px) {
+  .desktop-workspace .studio > .timeline.advanced-timeline { max-height: 180px; min-height: 180px; }
+}
 
 @media (max-width: 800px) {
   .studio > .topbar { gap: 6px 12px; }

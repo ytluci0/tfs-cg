@@ -34,6 +34,16 @@ test('duplicate accepted command IDs never repeat an increment, including after 
 test('stale revisions and unauthorized users are rejected before any command effects',async t=>{
  const x=await setup(t),viewer=await x.user('VIEWER');assert.equal((await x.api('/api/commands',x.request({revision:0}))).status,409);assert.equal((await x.api('/api/commands',x.request(),viewer.token)).status,403);assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.variables.homeScore,0);
 });
+
+test('settled local presses return the completed job and authoritative project in one response',async t=>{
+ const x=await setup(t),body=x.request(),result=await x.api('/api/commands?settle=true',body);
+ assert.equal(result.status,202);assert.equal(result.value.command.status,'succeeded');assert.equal(result.value.saved.project.variables.homeScore,1);assert.equal(result.value.saved.revision,2);
+ const duplicate=await x.api('/api/commands?settle=true',body);assert.equal(duplicate.value.duplicate,true);assert.equal(duplicate.value.saved.project.variables.homeScore,1);
+});
+test('settled submission leaves long sequences asynchronous and cancellable',async t=>{
+ const x=await setup(t,[action('delay','','1000'),action('increment','homeScore','1')]),body=x.request(),result=await x.api('/api/commands?settle=true',body);
+ assert.equal(result.value.command.status,'waiting');assert.equal(result.value.saved,undefined);await x.api('/api/commands/'+body.id+'/cancel',{});assert.equal((await x.done(body.id)).status,'cancelled');assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.variables.homeScore,0);
+});
 test('output permission preflight rejects a whole sequence before its first data change',async t=>{
  const x=await setup(t,[action('increment','homeScore','1'),action('preview','score'),action('take')]),designer=await x.user('DESIGNER');assert.equal((await x.api('/api/commands',x.request(),designer.token)).status,403);assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.variables.homeScore,0);
 });
@@ -64,7 +74,7 @@ test('restart interrupts pending work; its stored outcome can be queried without
  const x=await setup(t,[action('increment','homeScore','1'),action('delay','','1000'),action('increment','homeScore','10')]),body=x.request();await x.api('/api/commands',body);await pause(20);await x.restart();const job=(await x.api('/api/commands/'+body.id)).value;assert.equal(job.status,'interrupted');assert.equal(job.steps[1].status,'unconfirmed');assert.equal((await x.api('/api/commands',body)).value.duplicate,true);assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.variables.homeScore,1);
 });
 test('schema-two migration makes a consistent backup and preserves accounts/projects',async t=>{
- const x=await setup(t);const file=join(x.directory,'broadcastcg.sqlite');const db=new DatabaseSync(file);db.exec('DROP TABLE commands; DROP TABLE sports_clocks; PRAGMA user_version=2;');db.close();await x.restart();assert.equal(x.service.diagnostics().schemaVersion,7);const backups=readdirSync(join(x.directory,'backups'));assert.equal(backups.length,1);const backup=new DatabaseSync(join(x.directory,'backups',backups[0]),{readOnly:true});assert.equal(backup.prepare('PRAGMA user_version').get().user_version,2);assert.equal(backup.prepare('SELECT count(*) AS n FROM projects').get().n,1);backup.close();assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.id,x.p.id);
+ const x=await setup(t);const file=join(x.directory,'broadcastcg.sqlite');const db=new DatabaseSync(file);db.exec('DROP TABLE commands; DROP TABLE sports_clocks; PRAGMA user_version=2;');db.close();await x.restart();assert.equal(x.service.diagnostics().schemaVersion,9);const backups=readdirSync(join(x.directory,'backups'));assert.equal(backups.length,1);const backup=new DatabaseSync(join(x.directory,'backups',backups[0]),{readOnly:true});assert.equal(backup.prepare('PRAGMA user_version').get().user_version,2);assert.equal(backup.prepare('SELECT count(*) AS n FROM projects').get().n,1);backup.close();assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.id,x.p.id);
 });
 
  test('cancellation during an unacknowledged TAKE preserves the unconfirmed result',async t=>{
@@ -80,3 +90,10 @@ test('schema-two migration makes a consistent backup and preserves accounts/proj
  test('cancelling an API wait aborts its request and prevents a late data write',async t=>{
  const x=await setup(t);x.p.sources=[{id:'feed',name:'Test data',url:'https://example.com/feed',interval:0}];x.p.panels[0].controls[0].actions=[action('fetch','feed'),action('increment','homeScore','1')];await x.api('/api/projects',{project:x.p,revision:1});let started=false,aborted=false;t.mock.method(globalThis,'fetch',async(_url,options)=>new Promise((_resolve,reject)=>{started=true;options.signal.addEventListener('abort',()=>{aborted=true;reject(Error('aborted'));},{once:true});}));const body=x.request({revision:2});await x.api('/api/commands',body);while(!started)await pause(5);await x.api('/api/commands/'+body.id+'/cancel',{});assert.equal((await x.done(body.id)).status,'cancelled');assert.equal(aborted,true);assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.variables.homeScore,0);
  });
+test('visual decisions evaluate once; merged paths execute once and command IDs cannot replay them',async t=>{
+ const actions=[{...action('decision'),id:'choice',when:{mode:'all',rules:[{variable:'homeScore',operator:'eq',value:0}]},flow:{x:0,y:0,entry:true,yes:'yes',no:'no'}},{...action('increment','homeScore','1'),id:'yes',flow:{x:0,y:100,next:'merge'}},{...action('increment','homeScore','10'),id:'no',flow:{x:220,y:100,next:'merge'}},{...action('increment','awayScore','1'),id:'merge',flow:{x:100,y:200}}];
+ const x=await setup(t,actions),body=x.request(),start=await x.api('/api/commands',body);assert.equal(start.status,202,JSON.stringify(start));const done=await x.done(body.id);assert.equal(done.status,'succeeded',JSON.stringify(done));const saved=(await x.api('/api/projects/'+x.p.id)).value;assert.equal(saved.project.variables.homeScore,1);assert.equal(saved.project.variables.awayScore,1);assert.equal(done.steps.filter(s=>s.actionId==='merge'&&s.status==='succeeded').length,1);await x.api('/api/commands',body);assert.equal((await x.api('/api/projects/'+x.p.id)).value.revision,saved.revision);
+});
+test('visual flow output permissions are checked on both paths before changing any variables',async t=>{
+ const actions=[{...action('decision'),id:'choice',when:{mode:'all',rules:[{variable:'homeScore',operator:'eq',value:0}]},flow:{x:0,y:0,entry:true,yes:'safe',no:'take'}},{...action('increment','homeScore','1'),id:'safe',flow:{x:0,y:100}},{...action('take'),id:'take',flow:{x:220,y:100}}];const x=await setup(t,actions),designer=await x.user('DESIGNER');assert.equal((await x.api('/api/commands',x.request(),designer.token)).status,403);assert.equal((await x.api('/api/projects/'+x.p.id)).value.project.variables.homeScore,0);
+});

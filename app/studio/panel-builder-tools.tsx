@@ -8,8 +8,8 @@ import {Copy,Group,Ungroup,Lock,Unlock,Trash2,Layers,Eye,EyeOff,Grid2X2,Library,
 import type {Panel,Project} from '@/lib/studio-model';
 import {alignSelection,deleteSelection,distributeSelection,duplicateSelection,expandSelection,groupSelection,insertComponent,isControlLocked,makeComponent,orderSelection,panelIssues,selectionBounds,ungroupSelection,type Align} from '@/lib/panel-builder';
 import {arrangePanel} from '@/lib/panel-layout';
-type Props={project:Project;panel:Panel;selected:string[];select:(ids:string[])=>void;patch:(fn:(p:Panel)=>Panel)=>void;change:(fn:(p:Project)=>Project)=>void;onError:(e:unknown)=>void;zoom:number|'fit';setZoom:(v:number|'fit')=>void};
-export function PanelBuilderTools({project,panel,selected,select,patch,change,onError,zoom,setZoom}:Props){
+type Props={project:Project;panel:Panel;selected:string[];select:(ids:string[])=>void;patch:(fn:(p:Panel)=>Panel)=>void;change:(fn:(p:Project)=>Project)=>void;onError:(e:unknown)=>void};
+export function PanelBuilderTools({project,panel,selected,select,patch,change,onError}:Props){
  const [library,setLibrary]=useState(false),[validation,setValidation]=useState(false),[name,setName]=useState('My control group'),[prefix,setPrefix]=useState(''),[notice,setNotice]=useState('');
  const locked=panel.controls.some(c=>selected.includes(c.id)&&isControlLocked(panel,c)),issues=panelIssues(project,panel),errors=issues.filter(i=>i.severity==='error'),box=selectionBounds(panel,selected);
  function apply(fn:(p:Panel)=>Panel){try{patch(fn);}catch(e){onError(e);}}
@@ -25,7 +25,6 @@ export function PanelBuilderTools({project,panel,selected,select,patch,change,on
   <Button size="icon" variant="ghost" aria-label="Delete selected controls" disabled={!selected.length||locked} onClick={()=>{apply(p=>deleteSelection(p,selected));select([]);}}><Trash2/></Button>
   <span className="spacer"/>
   <label className="panel-tool-select"><Grid2X2 size={14}/>Snap<select aria-label="Snap grid" value={panel.snapGrid||0} onChange={e=>apply(p=>({...p,layoutVersion:2,snapGrid:Number(e.target.value)}))}>{[0,4,8,16,32].map(n=><option key={n} value={n}>{n?n+' px':'Off'}</option>)}</select></label>
-  <label className="panel-tool-select">Zoom<select aria-label="Panel zoom" value={zoom} onChange={e=>setZoom(e.target.value==='fit'?'fit':Number(e.target.value))}><option value="fit">Fit</option>{[.5,.75,1,1.25,1.5].map(n=><option key={n} value={n}>{n*100}%</option>)}</select></label>
   <Button size="sm" variant="secondary" onClick={()=>{setNotice('');setLibrary(true);}}><Library/>Components</Button>
   <Button size="sm" variant="outline" className={errors.length?'panel-validation-error':''} onClick={()=>setValidation(true)}>{issues.length?<AlertTriangle/>:<CheckCircle2/>}{issues.length?issues.length+' issues':'Validate'}</Button>
  </div><div className="panel-builder-hint"><span>{panel.freeLayout?'Drag to move · Shift-click or drag empty space to select many · Alt selects one group member / bypasses snap':'Choose Free layout to position and resize controls.'}</span>{box&&<span>{box.width} × {box.height} px{locked?' · Selection contains locked controls':''}</span>}</div>

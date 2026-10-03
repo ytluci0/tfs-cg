@@ -1,3 +1,4 @@
+import {compositionResources} from '../lib/studio-model.ts';
 import {randomUUID} from 'node:crypto';
 import {libraryMetadataSchema,folderName} from '../lib/project-library.ts';
 import {ServiceError} from './service-error.mjs';
@@ -47,7 +48,7 @@ export function createProjectLibrary({db,settings,readProject,requirePermission,
     const id=decodeURIComponent(match[1]),operation=match[2],row=readProject(actor,id),m=meta(id);
     if(operation==='preview'&&method==='GET'){
       const scene=row.project.scenes.find(s=>s.id===m.cover?.sceneId)||row.project.scenes[0];
-      return json({scene,variables:row.project.variables,time:Math.min(scene.duration,m.cover?.time??scene.duration),key:key(row.revision,m)});
+      return json({scene,compositions:compositionResources(row.project.scenes,scene),variables:row.project.variables,time:Math.min(scene.duration,m.cover?.time??scene.duration),key:key(row.revision,m)});
     }
     if(operation==='thumbnail'&&method==='GET'){
       const cached=settings.get('thumbnail:'+id);

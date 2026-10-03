@@ -47,7 +47,7 @@ test('schema six upgrade preserves accounts and creates a restorable pre-migrati
  const x=await fixture(t);await x.create('existing');x.service.close();
  const db=new DatabaseSync(join(x.directory,'broadcastcg.sqlite'));db.exec('ALTER TABLE auth_users DROP COLUMN access_starts_at; ALTER TABLE auth_users DROP COLUMN access_expires_at; PRAGMA user_version=6;');db.close();
  // Reopen separately because fixture owns the service lifetime.
- const upgraded=createLocalService({directory:x.directory});assert.equal(upgraded.diagnostics().schemaVersion,7);upgraded.close();
+ const upgraded=createLocalService({directory:x.directory});assert.equal(upgraded.diagnostics().schemaVersion,9);upgraded.close();
  const snapshots=readdirSync(join(x.directory,'backups')).filter(n=>n.startsWith('before-access-periods-'));assert.equal(snapshots.length,1);
  const previous=new DatabaseSync(join(x.directory,'backups',snapshots[0]),{readOnly:true});assert.equal(previous.prepare('PRAGMA user_version').get().user_version,6);assert.equal(previous.prepare('SELECT count(*) n FROM auth_users').get().n,2);previous.close();
  // Avoid a duplicate close in teardown by returning an open authority.

@@ -11,7 +11,7 @@ export const libraryMetadataSchema=z.object({
 export type LibraryMetadata=z.infer<typeof libraryMetadataSchema>;
 export type ProjectCard=LibraryMetadata&{id:string;name:string;revision:number;updated_at:number;scenes:number;panels:number;width:number;height:number;frameRate:number;favorite:boolean;thumbnailKey:string|null;expectedKey:string};
 export type LibraryListing={projects:ProjectCard[];folders:string[];lastProjectId:string|null;onAirProjectId:string|null;draftProjectId:string|null};
-export type ProjectPreview={scene:Scene;variables:Project['variables'];time:number;key:string};
+export type ProjectPreview={scene:Scene;compositions?:Scene[];variables:Project['variables'];time:number;key:string};
 export function createLibraryProject(options:{name:string;template:'blank'|'broadcast';width:number;height:number;frameRate:number}):Project{
   const p=defaultProject();p.name=options.name.trim();
   if(options.template==='blank'){

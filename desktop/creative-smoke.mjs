@@ -1,3 +1,4 @@
+import {inspectorCategory} from './inspector-test-tools.mjs';
 import assert from 'node:assert/strict';
 import {control,action,layer} from '../lib/studio-model.ts';
 export async function creativeSmoke({studio,js,api,reload,capture,checks,sleep,until,project}){
@@ -28,9 +29,9 @@ export async function creativeSmoke({studio,js,api,reload,capture,checks,sleep,u
  assert.ok(await js("document.querySelector('#editor-creative-image-mask ellipse')!==null"));
  const fit=await js("(()=>{const t=document.querySelector('#editor-creative-text-mask').closest('[data-layer-id]').querySelector('text');return{width:t.getBBox().width,size:Number(t.getAttribute('font-size'))};})()");assert.ok(fit.width<=521&&fit.size<85,JSON.stringify(fit));
  await js("[...document.querySelectorAll('.layer-select')].find(b=>b.textContent.includes('Fitted headline')).click()");await sleep(100);
- await input('[aria-label="Outline width"]','3');await save();assert.equal((await read()).project.scenes[0].layers.find(l=>l.id==='creative-text').visual.strokeWidth,3);
+ await inspectorCategory(js,sleep,'Style');await input('[aria-label="Outline width"]','3');await save();assert.equal((await read()).project.scenes[0].layers.find(l=>l.id==='creative-text').visual.strokeWidth,3);
  await capture('creative-designer.png');checks.push('Creative renderer: gradients, effects, vectors, cropped ellipse image and measured text fitting; inspector edits persist');
- await tab('Animate');await button('Select all keys');await input('[aria-label="Keyframe offset"]','0.25');await button('Move 2 keys');await button('Select all keys');await button('Copy keys');await click('[aria-label="Go to keyframe 2"]');await button('Paste at playhead');await input('[aria-label="Bezier X1"]','0.4');await save();
+ await tab('Animate');await inspectorCategory(js,sleep,'Motion','keys');await button('Select all keys');await input('[aria-label="Keyframe offset"]','0.25');await button('Move 2 keys');await button('Select all keys');await button('Copy keys');await click('[aria-label="Go to keyframe 2"]');await button('Paste at playhead');await input('[aria-label="Bezier X1"]','0.4');await save();
  let s=(await read()).project.scenes[0];assert.ok(s.layers.find(l=>l.id==='creative-text').keys.x.some(k=>k.time===.25));assert.ok(s.layers.find(l=>l.id==='creative-text').keys.x.length>=3);
  await capture('creative-animation.png');checks.push('Animation UI: multi-key selection, shift, copy/paste and editable Bezier easing persist');
  await tab('Panels');await tab('Operate');await idle();

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('broadcastCG',Object.freeze({
   network:(action,data)=>call('network',action,data),
   onNetwork:listener=>{const handler=(_event,state)=>listener(state);ipcRenderer.on('broadcastcg:network',handler);return()=>ipcRenderer.removeListener('broadcastcg:network',handler);},
   auth:async(action,data)=>{const result=await call('auth',action,data);if(!result.ok){const error=new Error(result.error);error.status=result.status;throw error;}return result.value;},
+  authResult:(action,data)=>call('auth',action,data),
   prepareAe:()=>call('prepareAe'),
   commitAe:options=>call('commitAe',options),
   cancelAe:()=>call('cancelAe'),

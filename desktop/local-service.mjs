@@ -1,10 +1,11 @@
+import {migrateEditing,createEditingStore} from './editing-store.mjs';
 import {aeOptionsSchema,aeScene} from '../lib/ae-model.ts';
 import {psdOptionsSchema,psdScene} from '../lib/psd-model.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {mkdirSync,readFileSync,unlinkSync} from 'node:fs';
 import {join} from 'node:path';
-import {validateProject,sceneSchema,variablesSchema,sourceSchema,variableActionValue,textValue,applyDataBindings,action,pathValue} from '../lib/studio-model.ts';
+import {compositionResources,validateProject,sceneSchema,variablesSchema,sourceSchema,variableActionValue,textValue,applyDataBindings,action,pathValue} from '../lib/studio-model.ts';
 
 import {migrateSports,createSportsClocks} from './sports-clocks.mjs';
 import {parseSportOperation,applySportOperation} from '../lib/sports-logic.ts';
@@ -51,7 +52,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const db=new DatabaseSync(join(directory,'broadcastcg.sqlite'));
   try{db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=3000;');
   const version=db.prepare('PRAGMA user_version').get().user_version;
-  if(version>7){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
+  if(version>9){db.close();throw Error('This data folder belongs to a newer BroadcastCG version.');}
   if(version===0)db.exec(`BEGIN IMMEDIATE;
     CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT NOT NULL,document TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL);
     CREATE TABLE assets(id TEXT PRIMARY KEY,name TEXT NOT NULL,mime TEXT NOT NULL,bytes BLOB NOT NULL);
@@ -74,13 +75,15 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     db.exec('PRAGMA user_version=6');
   }
   migrateAccess(db,directory,version===6);
+  if(db.prepare('PRAGMA user_version').get().user_version<8){if(version===7){mkdirSync(join(directory,'backups'),{recursive:true});db.prepare('VACUUM INTO ?').run(join(directory,'backups','before-editing-'+Date.now()+'-'+randomUUID()+'.sqlite'));}migrateEditing(db);}
+  if(db.prepare('PRAGMA user_version').get().user_version<9){if(version===8){mkdirSync(join(directory,'backups'),{recursive:true});db.prepare('VACUUM INTO ?').run(join(directory,'backups','before-motion-'+Date.now()+'-'+randomUUID()+'.sqlite'));}db.exec('PRAGMA user_version=9');}
   }catch(e){try{db.close();}catch{}throw e;}
   const clocks=createSportsClocks({db,monotonic});
   const security=createSecurity({db,now,workstation,event}),{auth,authenticate,requirePermission,requireWorkspace,canAccess,record}=security;
   const outputContext=Object.freeze({output:true});
   function actorFor(context){return authenticate(context?.token);}
   function readProject(actor,id){requireWorkspace(actor,id);const row=db.prepare('SELECT * FROM projects WHERE id=?').get(id);if(!row)throw new ServiceError('Workspace not found.',404);return {...row,project:clocks.project(JSON.parse(row.document))};}
-  function canReadAsset(actor,id){const row=db.prepare('SELECT uploaded_by FROM assets WHERE id=?').get(id);return !!row&&(row.uploaded_by===actor.user.id||db.prepare('SELECT project_id FROM project_assets WHERE asset_id=?').all(id).some(p=>canAccess(actor,p.project_id)));}
+  function canReadAsset(actor,id){const row=db.prepare('SELECT uploaded_by FROM assets WHERE id=?').get(id);return !!row&&(row.uploaded_by===actor.user.id||db.prepare('SELECT project_id FROM project_assets WHERE asset_id=?').all(id).some(p=>canAccess(actor,p.project_id))||db.prepare('SELECT s.project_id FROM snapshot_assets a JOIN project_snapshots s ON s.id=a.snapshot_id WHERE a.asset_id=?').all(id).some(p=>canAccess(actor,p.project_id)));}
   function validateAssets(actor,project){for(const id of assetIds(project))if(!canReadAsset(actor,id))throw new ServiceError('An image is missing or belongs to an inaccessible workspace.',403);}
   // Program deliberately starts empty. A restart never replays a TAKE.
   let program=null,publishing=false;
@@ -100,7 +103,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   const commands=createCommandEngine({db,authenticate,requirePermission,requireWorkspace,readProject,record,now,assertControl,
     prepare(data,project,actor){
       let actions,label,output=null;
-      if(data.kind==='control'){const panel=project.panels.find(p=>p.id===data.panelId),control=panel?.controls.find(c=>c.id===data.controlId);if(!control)throw new ServiceError('Control no longer exists.',404);if(!controlAvailable(control,project.variables))throw new ServiceError('This control is hidden or disabled by its conditions.',403);const trigger=data.event||'click';if(!['click','press','release','hold'].includes(trigger))throw new ServiceError('Unknown control event.');actions=controlActions(control,trigger);if(data.selectionValue!==undefined){if(!['roster','select','segmented','widget'].includes(control.kind)||typeof data.selectionValue!=='string')throw new ServiceError('Invalid selection.');try{selectOption(project,control,data.selectionValue);}catch(e){throw new ServiceError(e.message);}actions=[action('select-row',control.id,JSON.stringify({panelId:panel.id,value:data.selectionValue})),...actions];}label=control.label+' · '+trigger;}
+      if(data.kind==='control'){const panel=project.panels.find(p=>p.id===data.panelId),control=panel?.controls.find(c=>c.id===data.controlId);if(!control)throw new ServiceError('Control no longer exists.',404);if(!controlAvailable(control,project.variables))throw new ServiceError('This control is hidden or disabled by its conditions.',403);const trigger=data.event||'click';if(!['click','press','release','hold'].includes(trigger))throw new ServiceError('Unknown control event.');actions=controlActions(control,trigger);if(data.selectionValue!==undefined){if(!['roster','select','segmented','widget'].includes(control.kind)||typeof data.selectionValue!=='string')throw new ServiceError('Invalid selection.');try{selectOption(project,control,data.selectionValue);}catch(e){throw new ServiceError(e.message);}const selectionAction=action('select-row',control.id,JSON.stringify({panelId:panel.id,value:data.selectionValue}));if(actions.some(a=>a.flow)){selectionAction.flow={x:0,y:0,entry:true,next:actions.find(a=>a.flow?.entry)?.id};actions=actions.map(a=>({...a,flow:{...a.flow,entry:false}}));}actions=[selectionAction,...actions];}label=control.label+' · '+trigger;}
       else if(data.kind==='macro'){const macro=project.macros?.find(m=>m.id===data.macroId);if(!macro)throw new ServiceError('Macro no longer exists.',404);actions=macro.actions;label=macro.name;}
       else if(data.kind==='clock'){actions=[action('clock',data.variable,JSON.stringify(data.clock))];label='Clock - '+data.variable;}
       else if(data.kind==='counter'){actions=[action('counter',data.variable,JSON.stringify({delta:data.delta,value:data.value,panelId:data.panelId,controlId:data.controlId}))];label='Counter - '+data.variable;}
@@ -149,7 +152,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
       if(mode!=='hide'){const canonical=saved.scenes.find(s=>s.id===scene?.id);if(!canonical||JSON.stringify(canonical)!==JSON.stringify(scene))throw new ServiceError('Save this graphic before sending it to output.',409);checkVariables(current,saved,variables,requirePermission);}
       beforePublish();publishing=true;
       try{
-        const cue=data.cue||(mode==='update'?program?.cue:undefined);if(cue&&!scene?.cues?.some(c=>c.id===cue))throw new ServiceError('The animation cue no longer exists.');program={scene,variables,mode,startedAt,...(cue?{cue}:{}),revision:randomUUID(),projectId,acknowledged:false};
+        const cue=data.cue||(mode==='update'?program?.cue:undefined);if(cue&&!scene?.cues?.some(c=>c.id===cue))throw new ServiceError('The animation cue no longer exists.');program={scene,compositions:mode==='hide'?program?.compositions:scene?compositionResources(saved.scenes,scene):[],variables,mode,startedAt,...(cue?{cue}:{}),revision:randomUUID(),projectId,acknowledged:false};
         await confirmProgram(program);program.acknowledged=true;
         record(mode.toUpperCase(),scene?.id||'program','acknowledged',current,{projectId});return program;
       }catch(e){e.unconfirmed=true;record(mode.toUpperCase(),scene?.id||'program','unconfirmed',current,{projectId});throw e;}
@@ -167,14 +170,16 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
   }
   const library=createProjectLibrary({db,settings,readProject,requirePermission,canAccess,record,now,program:()=>program,readJson,assertControl,assertIdle:id=>commands.assertIdle(id),recovery:readRecovery,
     saveProject:(project,revision,context)=>route(new Request('broadcastcg://app/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project,revision})}),context)});
+  const editing=createEditingStore({db,settings,readProject,requirePermission,canReadAsset,readJson,assertControl,record,now});
   async function route(request,context){
     const url=new URL(request.url),path=url.pathname,method=request.method;
     const outputRead=context===outputContext;
     if(outputRead&&(method!=='GET'||!(path==='/api/program'||path.startsWith('/api/assets/'))))throw new ServiceError('Output is read-only.',403);
     const actor=outputRead?null:actorFor(context);
     if(actor)requirePermission(actor,'projects.view');
+    if(path.startsWith('/api/editing/')||path==='/api/media'||path.startsWith('/api/media/'))return editing(request,actor);
     if(path.startsWith('/api/library'))return library(request,context,()=>actorFor(context));
-    if(path==='/api/commands'&&method==='POST'){const result=commands.submit(await readJson(request),context?.token);return json(result,result.duplicate?200:202);}
+    if(path==='/api/commands'&&method==='POST'){const result=commands.submit(await readJson(request),context?.token);if(url.searchParams.get('settle')==='true'){result.command=await commands.settle(actor,result.command.id);const current=actorFor(context);if(!['running','waiting','cancelling'].includes(result.command.status))result.saved=readProject(current,result.command.projectId);}return json(result,result.duplicate?200:202);}
     if(path==='/api/commands'&&method==='GET')return json(commands.state(actor,url.searchParams.get('projectId')));
     if(path.startsWith('/api/commands/')){const id=decodeURIComponent(path.slice('/api/commands/'.length).replace(/\/cancel$/,''));if(method==='POST'&&path.endsWith('/cancel'))return json(commands.cancel(actor,id));if(method==='GET')return json(commands.get(actor,id));}
     if(path==='/api/clocks'&&method==='GET'){const projectId=url.searchParams.get('projectId');readProject(actor,projectId);return json(clocks.snapshot(projectId));}
@@ -277,7 +282,7 @@ export function createLocalService({directory,encrypt,decrypt,beforePublish=()=>
     authorize(token,permission){const actor=authenticate(token);if(permission)requirePermission(actor,permission);return actor;},
     health(){try{return Number.isInteger(db.prepare('PRAGMA schema_version').get().schema_version);}catch{return false;}},
     async handle(request,context){try{return await route(request,context);}catch(e){const status=e instanceof ServiceError?e.status:e?.issues?400:500;if(status>=500)event('SERVICE_ERROR','failed');return json({error:e instanceof ServiceError?e.message:e?.issues?'Project validation failed. Existing data was preserved.':'The local service could not complete the operation.'},status);}},
-    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:7,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
+    diagnostics(){return{database:db.prepare('PRAGMA quick_check').get().quick_check,schemaVersion:db.prepare('PRAGMA user_version').get().user_version,projects:db.prepare('SELECT count(*) AS n FROM projects').get().n,events:db.prepare('SELECT time,action,target,status FROM events ORDER BY id DESC LIMIT 100').all()};},
     importPsd(draft,raw,token){
       const options=psdOptionsSchema.parse(raw),actor=authenticate(token);requirePermission(actor,'templates.import');requirePermission(actor,'graphics.create');
       const old=readProject(actor,options.projectId);commands.assertIdle(options.projectId);

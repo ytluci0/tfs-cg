@@ -1,0 +1,13 @@
+import {z} from 'zod';
+const n=z.number().finite(),id=z.string().min(1).max(150);
+export const motionKeySchema=z.object({time:n.min(0).max(600),value:z.union([n,z.string().regex(/^#[\da-fA-F]{6}$/)]),ease:z.enum(['linear','smooth','step','bezier']),curve:z.tuple([n.min(0).max(1),n.min(-2).max(3),n.min(0).max(1),n.min(-2).max(3)]).optional()});
+export const propertyTrackSchema=z.object({property:id,keys:z.array(motionKeySchema).max(1000)});
+export const formulaSchema=z.object({property:id,expression:z.string().trim().min(1).max(1000),enabled:z.boolean()});
+const point=z.object({x:n.min(0).max(1),y:n.min(0).max(1)});
+export const shapeMaskSchema=z.object({id,name:z.string().max(100),enabled:z.boolean(),operation:z.enum(['add','subtract','intersect']),shape:z.enum(['rectangle','ellipse','polygon']),x:n.min(0).max(1),y:n.min(0).max(1),width:n.min(.0001).max(1),height:n.min(.0001).max(1),points:z.array(point).min(3).max(100).optional(),feather:n.min(0).max(100),density:n.min(0).max(1),invert:z.boolean()});
+export const matteSchema=z.object({layerId:id,mode:z.enum(['alpha','luma']),invert:z.boolean(),hideSource:z.boolean()});
+export const markerSchema=z.object({id,name:z.string().min(1).max(100),time:n.min(0).max(600)});
+export const workAreaSchema=z.object({start:n.min(0).max(600),end:n.min(.001).max(600),loop:z.boolean()});
+export const flowSchema=z.object({x:n.min(0).max(6000),y:n.min(0).max(6000),entry:z.boolean().optional(),next:id.optional(),yes:id.optional(),no:id.optional()});
+export type MotionKey=z.infer<typeof motionKeySchema>;
+export type ShapeMask=z.infer<typeof shapeMaskSchema>;

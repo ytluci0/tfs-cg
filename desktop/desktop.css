@@ -3,6 +3,8 @@
 .desktop-workspace .panel-layout{min-height:0;overflow:auto;flex:1}.desktop-workspace .workspace-heading{flex-shrink:0}
 .desktop-workspace .studio[data-view=design]>.timeline{display:none}.desktop-workspace .editor-layout{overflow:hidden}.desktop-workspace .canvas-panel{min-height:0}.desktop-workspace .canvas-area{min-height:0;container-type:size;display:grid;place-items:center;padding:18px;overflow:hidden}.desktop-workspace .canvas-area .canvas-stage{width:min(100cqw,177.77778cqh);height:auto;max-height:100%}.desktop-workspace .timeline{max-height:28vh;overflow:auto;flex-shrink:0}.desktop-workspace .canvas-toolbar,.desktop-workspace .canvas-footer{flex-shrink:0}
 
+/* Portalled editor dialogs must not remain visible above the session lock. */
+body:has([data-session-locked]) > :not(#root){display:none!important}
 .desktop-workspace .studio{height:calc(100dvh - 34px);min-height:0;overflow:hidden}
 .desktop-workspace .editor-layout{min-height:0;overflow:hidden}
 .desktop-workspace .editor-layout>.panel{overflow:auto;max-height:none}

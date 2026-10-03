@@ -10,3 +10,35 @@
 @media(min-width:1051px){.desktop-workspace .panels-workspace .panel-layout{overflow:hidden;align-items:stretch}.desktop-workspace .panels-workspace .panel-layout>aside,.desktop-workspace .panels-workspace .panel-surface{overflow:auto;min-height:0;max-height:none}.desktop-workspace .panels-workspace .panel-surface{display:flex;flex-direction:column}.desktop-workspace .panels-workspace .panel-surface>*{flex-shrink:0}.desktop-workspace .panels-workspace .panel-canvas-scroll{flex:1;min-height:200px;overflow:auto}.desktop-workspace .panels-workspace .panel-layout>.panel-surface{margin:0 auto}}
 .panel-builder-toolbar .panel-tool-select,.panel-touch-toggle{flex-direction:row}
 .desktop-workspace .panels-workspace .panel-layout>.panel-surface{width:100%;min-width:0}
+
+/* The viewport fills the workspace; scaling never changes saved control geometry. */
+.panels-workspace .workspace-heading.compact{padding:6px 12px;gap:8px}
+.panels-workspace .workspace-heading.compact h1{font-size:16px;margin-right:4px}
+.panels-workspace .workspace-heading.compact button{min-height:28px;height:30px;font-size:11px}
+.panels-workspace .workspace-heading.compact [data-slot=tabs-list]{height:32px}
+.panels-workspace .hardware-box{margin:0 12px 5px;padding:4px 8px;font-size:11px;border-radius:4px;flex-shrink:0}
+.panels-workspace .panel-builder-toolbar{padding:5px 12px;gap:5px}
+.panels-workspace .panel-builder-hint{padding:4px 12px}
+.panels-workspace .panel-layout>.panel-surface{max-width:none;margin:0;padding:10px 12px;min-width:0}
+.panels-workspace .panel-title-row{margin-bottom:8px;font-size:11px}
+.panels-workspace .panel-title-row strong{font-size:14px}
+.panels-workspace.canvas-focused .panel-layout{grid-template-columns:minmax(0,1fr)}
+.panels-workspace.canvas-focused .panel-layout>aside{display:none}
+.panel-canvas-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:5px 8px;background:#192331;border:1px solid #344254;border-bottom:0;border-radius:5px 5px 0 0;min-width:0;flex-shrink:0;font-size:11px}
+.panel-canvas-toolbar>button{display:flex;align-items:center;justify-content:center;gap:5px;min-height:28px;padding:4px 7px;border:1px solid transparent;border-radius:4px;white-space:nowrap}
+.panel-canvas-toolbar>button:hover{background:#2b3b4e}
+.panel-canvas-toolbar>button[aria-pressed=true]{background:#473021;border-color:#c87534;color:#ffc18f}
+.panel-canvas-toolbar>button:disabled{opacity:.4;cursor:default}
+.panel-canvas-toolbar button:focus-visible,.panel-canvas-toolbar select:focus-visible{outline:2px solid #83c8ff;outline-offset:1px}
+.panel-canvas-toolbar .panel-tool-select{margin:0;display:flex;flex-direction:row}
+.panel-canvas-toolbar .panel-tool-select select{margin:0;min-height:28px;padding:4px;max-width:140px}
+.panel-canvas-info{color:#afc3db;font-size:10px;white-space:nowrap}
+.panel-canvas-help{color:#849bb7;font-size:10px;white-space:nowrap}
+.panels-workspace .panel-canvas-scroll{position:relative;min-width:0;width:100%;padding:8px;scrollbar-gutter:stable;overscroll-behavior:contain;background:#0d141e;border:1px solid #344254;border-radius:0 0 5px 5px;outline:none;overflow:auto;min-height:200px}
+.panel-canvas-scroll .panel-canvas-extent{margin:0 auto;flex-shrink:0}
+.panel-canvas-scroll .free-controls{box-shadow:0 3px 18px #0005}
+.panels-workspace.operating .control-pending button:disabled{opacity:1}
+.panel-canvas-scroll.hand-ready,.panel-canvas-scroll.hand-ready *{cursor:grab!important}
+.panel-canvas-scroll.is-panning,.panel-canvas-scroll.is-panning *{cursor:grabbing!important;user-select:none}
+@media(min-width:1051px){.desktop-workspace .panels-workspace .panel-canvas-scroll{flex:1 1 0;min-height:160px}.desktop-workspace .panels-workspace .panel-layout>.panel-surface{margin:0}}
+@media(max-width:1050px){.panels-workspace .panel-canvas-scroll{height:60vh;max-height:720px}.panels-workspace.canvas-focused .panel-layout>.panel-surface{display:flex;flex-direction:column;flex:1;min-height:0}.panels-workspace.canvas-focused .panel-canvas-scroll{flex:1 1 0;min-height:180px;height:auto}.panel-canvas-toolbar .panel-canvas-help{display:none}}

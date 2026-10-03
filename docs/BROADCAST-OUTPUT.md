@@ -17,6 +17,8 @@ OBS references: [Browser Source properties](https://obsproject.com/kb/browser-so
 
 ## Acknowledgements, timing and failure behavior
 
+From 0.19.2, explicitly starting output recovers an output URL key that Windows can no longer decrypt. The unreadable encrypted file is preserved locally before a newly protected key replaces it. Account passwords, remembered login and data-feed credentials are unchanged. If you use OBS Browser Source, copy the new output URL into OBS when the recovery notice appears. Direct NDI reconnects its private renderer automatically. Output still starts empty and requires a new TAKE; it never replays a saved graphic. If Windows cannot protect the replacement key, startup fails without replacing the old file.
+
 The bridge runs as a separate local process, without database or account access. Only the dedicated output bundle, current immutable program snapshot and referenced PNG/JPEG/WebP images are available. It refuses writes, arbitrary file paths, foreign origins and duplicate receivers. The editor's database work does not run in this process or in OBS's rendering process; that separation is not a guarantee of command latency under heavy database load.
 
 A new TAKE waits for image decoding, completion of font loading (fallback fonts can still be used), React commit and two receiving-browser animation callbacks. Only the selected receiver's exact revision and matching viewport can acknowledge it. Missing images, a stale receiver, timeout or disconnect are failures/unconfirmed states. Inspect the receiver and command history before issuing a new command; commands are never automatically retried. The acknowledgement measures preparation/rendering, **not OBS composition, an encoded frame, physical scanout or SDI/NDI emission**.

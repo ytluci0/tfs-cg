@@ -24,6 +24,7 @@
     "editor-state.cjs",
     "workstation-data.cjs",
     "output-controller.cjs",
+    "output-key.cjs",
     "ndi-controller.cjs",
     "ndi-config.cjs",
     "assets/NDI-NOTICES.txt"
